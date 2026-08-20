@@ -1,0 +1,53 @@
+name: 작업
+description: 수직 슬라이스 또는 백로그 항목
+labels: ["type: feature"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        **이 저장소는 기능의 폭이 아니라 하나의 문제를 끝까지 증명하는 것이 목표입니다.**
+        기능 추가 제안은 기본적으로 반대 방향입니다. 깊이를 더하는 제안을 환영합니다.
+
+  - type: textarea
+    id: what
+    attributes:
+      label: 무엇을
+      description: 이 작업이 완성하는 하나의 수직 슬라이스
+    validations:
+      required: true
+
+  - type: textarea
+    id: done
+    attributes:
+      label: 완료 기준
+      description: 체크박스로. "구현했다"가 아니라 "증명했다"의 형태로 적어주세요.
+      placeholder: |
+        - [ ] 락 획득 순서가 stay_date 오름차순으로 고정된다
+        - [ ] 정렬을 제거하면 T2가 실패한다
+    validations:
+      required: true
+
+  - type: dropdown
+    id: tier
+    attributes:
+      label: Tier
+      description: "Tier 0가 완결되기 전에 Tier 1 이하를 착수하지 않습니다."
+      options:
+        - "tier-0: 없으면 정합성 주장이 무너진다"
+        - "tier-1: 운영 — 있으면 문제가 완결된다"
+        - "tier-2: 깊이 — 기능이 아니라 증명을 더한다"
+        - "tier-3: 구현하지 않고 문서로만"
+    validations:
+      required: true
+
+  - type: input
+    id: docs
+    attributes:
+      label: 근거 문서
+      placeholder: "docs/02-scope.md, docs/adr/0002-pessimistic-lock.md"
+
+  - type: input
+    id: deps
+    attributes:
+      label: 선행 이슈
+      placeholder: "#2"

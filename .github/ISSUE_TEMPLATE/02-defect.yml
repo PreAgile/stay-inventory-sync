@@ -1,0 +1,35 @@
+name: 정합성 결함
+description: 재고·예약 상태가 어긋나는 문제
+labels: ["type: fix", "correctness"]
+body:
+  - type: textarea
+    id: invariant
+    attributes:
+      label: 어떤 불변식이 깨졌는가
+      description: |
+        INV-1  0 <= sold <= total
+        INV-2  sold == 해당 날짜를 포함하는 CONFIRMED 예약 수
+        INV-3  checkIn < checkOut
+      placeholder: "INV-2 — sold는 3인데 CONFIRMED 예약은 2건"
+    validations:
+      required: true
+
+  - type: textarea
+    id: repro
+    attributes:
+      label: 재현 경로
+      description: 동시성 문제라면 어떤 인터리빙에서 발생하는지 시간 순서로 적어주세요.
+      placeholder: |
+        t1  요청 A가 3/1 행을 잠금
+        t2  요청 B가 3/2 행을 잠금
+        t3  A가 3/2를, B가 3/1을 기다림 → 순환 대기
+    validations:
+      required: true
+
+  - type: textarea
+    id: test
+    attributes:
+      label: 이 결함을 잡는 테스트
+      description: "고치기 전에 실패하는 테스트를 먼저 만듭니다. 통과하는 테스트는 아무것도 증명하지 않습니다."
+    validations:
+      required: true

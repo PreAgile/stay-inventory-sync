@@ -1,0 +1,46 @@
+name: 설계 결정 제안
+description: 새 ADR이 필요한 판단
+labels: ["type: adr", "needs-decision"]
+body:
+  - type: checkboxes
+    id: rejected-check
+    attributes:
+      label: 기각 목록 확인
+      description: "아래 항목은 ADR에서 이미 검토하고 기각했습니다. 다시 제안하지 않습니다."
+      options:
+        - label: "Kafka / 메시지 브로커 (ADR-0004), @TransactionalEventListener (ADR-0003), 낙관적 락·SERIALIZABLE·Redis 분산 락 (ADR-0002), 코루틴·Lincheck·Java 전환 (ADR-0005), Allocated inventory (ADR-0001) — 이 중 어느 것도 아님을 확인했습니다"
+          required: true
+  - type: markdown
+    attributes:
+      value: |
+        기각 논거에 **실제로 오류가 있다고 판단되면**, 제안이 아니라
+        **어느 ADR의 어느 문장이 틀렸는지**를 지적해주세요. 그것이 더 유용합니다.
+
+  - type: textarea
+    id: context
+    attributes:
+      label: 맥락
+      description: 어떤 상황이 이 판단을 필요하게 만들었는가
+    validations:
+      required: true
+
+  - type: textarea
+    id: decision
+    attributes:
+      label: 제안하는 결정
+    validations:
+      required: true
+
+  - type: textarea
+    id: alternatives
+    attributes:
+      label: 기각할 대안과 근거
+      description: "**이 칸이 ADR의 본체입니다.** 대안 없이 내린 결정은 결정이 아니라 기본값입니다."
+    validations:
+      required: true
+
+  - type: textarea
+    id: revisit
+    attributes:
+      label: 재검토 조건
+      description: 무엇이 참이 되면 이 결정을 다시 볼 것인가
