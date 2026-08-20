@@ -197,6 +197,10 @@ Conventional Commits: `feat:`, `fix:`, `docs:`, `test:`, `refactor:`, `chore:`
 "과제 / assignment / interview / 지원" 같은 단어를 쓰지 않는다.**
 이 저장소는 개인 기술 실험이다.
 
+**예외: 외부 채널·OSS 의 공개 스펙을 인용할 때는 출처명을 적는다.**
+근거의 출처를 지우면 "원문에서 직접 확인했다"(`docs/05-ai-collaboration.md`)는 주장 자체가
+검증 불가능해진다. 이 규칙이 막으려는 것은 지원·과제 흔적이지 기술 출처가 아니다.
+
 ### AI 리뷰 대응
 
 이 저장소는 CodeRabbit과 Gemini Code Assist를 PR 리뷰어로 쓴다.
