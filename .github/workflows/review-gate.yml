@@ -1,0 +1,61 @@
+name: Review Gate
+
+# 이 저장소의 리뷰 주체는 사람이다.
+# 봇 리뷰 유무와 무관하게, 작성자가 내용을 읽고 수락/질문/이견 중
+# 하나를 명시하고 그 근거를 남겨야 머지할 수 있다.
+
+on:
+  pull_request:
+    types: [opened, edited, reopened, synchronize, ready_for_review]
+
+permissions:
+  contents: read
+  pull-requests: write
+
+concurrency:
+  group: review-gate-${{ github.event.pull_request.number }}
+  cancel-in-progress: true
+
+jobs:
+  verdict:
+    name: 리뷰 판단 검증
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          sparse-checkout: .github/scripts
+
+      # PR 본문은 환경변수로만 전달한다. 셸 보간을 거치지 않으므로 주입되지 않는다.
+      - name: 판단 절 검증
+        id: check
+        env:
+          PR_BODY: ${{ github.event.pull_request.body }}
+        run: python3 .github/scripts/check_review_verdict.py
+
+      # 검증 실패 시에도 현재 판단 상태를 라벨로 드러낸다.
+      # 보드에서 "무엇이 답변을 기다리는가"가 한눈에 보여야 한다.
+      - name: 판단 라벨 동기화
+        if: always()
+        env:
+          GH_TOKEN: ${{ github.token }}
+          PR: ${{ github.event.pull_request.number }}
+          REPO: ${{ github.repository }}
+          WANTED: ${{ steps.check.outputs.label }}
+        run: |
+          set -euo pipefail
+          all='review: accepted
+          review: awaiting-answer
+          review: objection'
+          while IFS= read -r label; do
+            [ "$label" = "${WANTED:-}" ] && continue
+            gh api "repos/$REPO/issues/$PR/labels/$(printf %s "$label" | jq -sRr @uri)" \
+              -X DELETE >/dev/null 2>&1 || true
+          done <<< "$all"
+          if [ -n "${WANTED:-}" ]; then
+            gh api "repos/$REPO/issues/$PR/labels" -X POST -f "labels[]=$WANTED" >/dev/null
+            echo "라벨 → $WANTED"
+          else
+            echo "판단이 파싱되지 않아 라벨을 붙이지 않는다."
+          fi
