@@ -48,7 +48,8 @@ ADR-0005에서 확정한 제한이다. **이 범위를 벗어나는 코드는 �
 
 | 금지 | 이유 |
 |---|---|
-| 코루틴 | JDK 21 가상 스레드를 쓴다. 구조적 동시성이 필요한 지점 없음 |
+| 코루틴 | 데이터 접근이 블로킹 JDBC다. R2DBC 없이는 이득 0이고, R2DBC로 가면 JPA가 사라진다. 트랜잭션 컨텍스트도 ThreadLocal 기반이라 절대 규칙 3이 취약해진다 (ADR-0005) |
+| 가상 스레드 | 상한이 스레드가 아니라 커넥션 풀에 있어 기여하지 않는다. JDK 21에서는 pinning 위험만 남는다 (ADR-0006) |
 | DSL 빌더 | 읽는 비용 대비 이득 없음 |
 | `inline` + `reified` | 이 규모에서 정당화되지 않음 |
 | context receivers | 실험적이며 낯설다 |
@@ -126,6 +127,8 @@ class Reservation(
 | SERIALIZABLE 격리 수준 | ADR-0002 |
 | Redis 분산 락 | ADR-0002 |
 | 코루틴 도입 | ADR-0005 |
+| 가상 스레드 활성화 (`spring.threads.virtual.enabled`) | ADR-0006 |
+| pinning 회피 목적의 JDK 24/25 이관 | ADR-0006 (편익이 0이므로 비용만 남음) |
 | Lincheck 등 모델 체킹 | ADR-0005 (검증 대상이 인메모리 자료구조라 적용 불가) |
 | Java 전환 | ADR-0005 |
 | Allocated inventory | ADR-0001 |
@@ -193,6 +196,10 @@ Conventional Commits: `feat:`, `fix:`, `docs:`, `test:`, `refactor:`, `chore:`
 **커밋 메시지, 코드, 문서 어디에도 특정 회사명이나
 "과제 / assignment / interview / 지원" 같은 단어를 쓰지 않는다.**
 이 저장소는 개인 기술 실험이다.
+
+**예외: 외부 채널·OSS 의 공개 스펙을 인용할 때는 출처명을 적는다.**
+근거의 출처를 지우면 "원문에서 직접 확인했다"(`docs/05-ai-collaboration.md`)는 주장 자체가
+검증 불가능해진다. 이 규칙이 막으려는 것은 지원·과제 흔적이지 기술 출처가 아니다.
 
 ### AI 리뷰 대응
 
