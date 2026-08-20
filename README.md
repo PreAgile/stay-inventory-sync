@@ -132,6 +132,7 @@ docker compose up -d
 | [06-backlog](docs/06-backlog.md) | 우선순위와 착수 기준 |
 | [ADR](docs/adr/) | 설계 결정과 **기각한 대안** |
 | [AGENTS.md](AGENTS.md) | 코딩 에이전트용 규약 (`CLAUDE.md`는 심볼릭 링크) |
+| [CONTRIBUTING.md](CONTRIBUTING.md) | 사람용 진입점 — 읽는 순서, 라벨·마일스톤 체계, PR 규약 |
 
 ---
 
