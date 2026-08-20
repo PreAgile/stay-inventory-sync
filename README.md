@@ -123,6 +123,10 @@ Kotlin은 의도적으로 **좁은 부분집합만** 사용한다.
 
 JPA 엔티티에는 `data class`를 쓰지 않는다. 이유도 ADR-0005에 있다.
 
+JPA는 쓰되 **엔티티 간 연관 매핑을 두지 않는다.** dirty checking이 아키텍처 규칙을 우회해
+재고를 바꾸는 경로를 만들기 때문이다. 채택 근거와 기각한 대안(jOOQ, R2DBC 등)은
+[ADR-0008](docs/adr/0008-jpa-with-explicit-writes.md).
+
 H2는 사용하지 않는다. `SELECT FOR UPDATE`의 동작이 PostgreSQL과 달라
 락 검증이 성립하지 않기 때문이다.
 
@@ -150,7 +154,7 @@ docker compose up -d
 | [04-capacity-and-limits](docs/04-capacity-and-limits.md) | 진짜 병목은 어디인가 |
 | [05-ai-collaboration](docs/05-ai-collaboration.md) | AI 협업의 경계와 판단 기록 |
 | [06-backlog](docs/06-backlog.md) | 우선순위와 착수 기준 |
-| [ADR](docs/adr/) | 설계 결정과 **기각한 대안** (`0001`~`0007` · `0009` · `0010`. `0008` 은 PR 대기) |
+| [ADR](docs/adr/) | 설계 결정과 **기각한 대안** (`0001`~`0010`. `0008` 은 영속성 매핑 계층) |
 | [AGENTS.md](AGENTS.md) | 코딩 에이전트용 규약 (`CLAUDE.md`는 심볼릭 링크) |
 | [CONTRIBUTING.md](CONTRIBUTING.md) | 사람용 진입점 — 읽는 순서, 라벨·마일스톤 체계, PR 규약 |
 
