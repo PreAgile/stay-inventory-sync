@@ -101,6 +101,9 @@ Kotlin은 의도적으로 **좁은 부분집합만** 사용한다.
 코루틴, DSL, `inline reified`, context receivers는 쓰지 않는다.
 사용/미사용 목록과 근거는 [ADR-0005](docs/adr/0005-kotlin-subset.md).
 
+가상 스레드도 켜지 않는다. 이 워크로드의 상한은 스레드가 아니라 커넥션 풀이므로
+기여하지 않는다. 근거는 [ADR-0006](docs/adr/0006-no-virtual-threads.md).
+
 JPA 엔티티에는 `data class`를 쓰지 않는다. 이유도 ADR-0005에 있다.
 
 H2는 사용하지 않는다. `SELECT FOR UPDATE`의 동작이 PostgreSQL과 달라
@@ -130,7 +133,7 @@ docker compose up -d
 | [04-capacity-and-limits](docs/04-capacity-and-limits.md) | 진짜 병목은 어디인가 |
 | [05-ai-collaboration](docs/05-ai-collaboration.md) | AI 협업의 경계와 판단 기록 |
 | [06-backlog](docs/06-backlog.md) | 우선순위와 착수 기준 |
-| [ADR](docs/adr/) | 설계 결정과 **기각한 대안** |
+| [ADR](docs/adr/) | 설계 결정과 **기각한 대안** (0001~0006) |
 | [AGENTS.md](AGENTS.md) | 코딩 에이전트용 규약 (`CLAUDE.md`는 심볼릭 링크) |
 
 ---
