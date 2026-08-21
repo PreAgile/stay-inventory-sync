@@ -116,12 +116,54 @@ stateDiagram-v2
 INV-1  모든 (room_type_id, stay_date)에 대해  0 <= sold <= total
 
 INV-2  모든 (room_type_id, stay_date)에 대해
-       sold == COUNT(해당 날짜를 포함하는 status='CONFIRMED' 예약)
+       sold == COUNT(해당 날짜를 포함하고 재고를 점유 중인 예약)
 
 INV-3  모든 CONFIRMED 예약에 대해 check_in < check_out
 ```
 
 INV-2가 실질적 핵심이다. 재고 카운터와 예약 사실이 어긋나는 순간을 잡아낸다.
+
+### 재고 점유 상태 집합
+
+`INV-2`의 카운트 대상은 **재고를 점유 중인 상태**다. `CONFIRMED` 하나가 아니다.
+
+```
+재고 점유 상태 = { CONFIRMED, CHECKED_IN, CHECKED_OUT }
+```
+
+`CONFIRMED` 만 세면 체크인 한 건으로 즉시 깨진다. 전이도에 `CONFIRMED -> CHECKED_IN` 이 있고
+**재고 복원은 `CONFIRMED -> CANCELED` 에서만** 일어나므로(절대 규칙 7), 체크인 후에도 `sold` 는 그대로다.
+
+| | 체크인 전 | 체크인 후 |
+|---|---|---|
+| `sold` | 1 | 1 (복원 대상이 아니므로 정상) |
+| `COUNT(status='CONFIRMED')` | 1 | **0** |
+
+`sold != COUNT` 가 되어 위반으로 잡힌다. T1~T4 가 체크인 경로를 밟지 않아서 아직 드러나지 않을 뿐이다.
+
+**틀린 불변식은 없는 불변식보다 나쁘다.** 검증기가 이 빨간불을 띄우면
+`sold` 를 줄여 맞추는 쪽으로 고치기 쉽고, 그러면 체크인한 객실이 다시 팔린다.
+**정합성을 지키려고 만든 불변식이 오버부킹을 유도한다.**
+
+정의를 `{ CONFIRMED, CHECKED_IN, CHECKED_OUT }` 으로 두면 상태가 늘어도 흔들리지 않는다.
+세어야 할 상태를 나열하는 것이 아니라 **복원이 일어나는 전이만 제외**하는 형태이기 때문이다.
+지금 빠지는 것은 `CANCELED` 뿐이다.
+
+정의가 여러 곳에 흩어지지 않도록 단일 진실 원천을 enum 에 둔다.
+
+```kotlin
+enum class ReservationStatus {
+    PENDING, CONFIRMED, CHECKED_IN, CHECKED_OUT, CANCELED;
+
+    val occupiesInventory: Boolean get() = this in OCCUPYING
+
+    companion object {
+        val OCCUPYING = setOf(CONFIRMED, CHECKED_IN, CHECKED_OUT)
+    }
+}
+```
+
+불변식 검증기와 도메인 로직이 같은 정의를 본다. 두 곳이 어긋날 자리가 없다.
 
 ---
 
