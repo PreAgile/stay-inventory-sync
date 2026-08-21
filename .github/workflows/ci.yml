@@ -77,8 +77,13 @@ jobs:
         if: steps.probe.outputs.present == 'true'
         run: ./gradlew build --no-daemon
 
+      # 리포트 게시는 테스트 결과를 보여주는 일이지 판정하는 일이 아니다.
+      # 포크 PR·Dependabot 실행은 permissions 블록과 무관하게 토큰이 읽기 전용이라
+      # 체크 생성이 실패한다. 그때 잡 전체를 빨간불로 만들면 이 PR 이 없앤 문제가
+      # 형태만 바꿔 돌아온다. 게시 실패는 게시 실패로만 남긴다.
       - name: Publish test report
         if: always() && steps.probe.outputs.present == 'true'
+        continue-on-error: true
         uses: mikepenz/action-junit-report@v5
         with:
           report_paths: '**/build/test-results/test/TEST-*.xml'
@@ -89,5 +94,9 @@ jobs:
         uses: actions/upload-artifact@v4
         with:
           name: test-reports
-          path: '**/build/reports/tests/'
+          # HTML 리포트만 올리면 게시 단계가 읽는 원본 XML 이 빠진다.
+          # 실패를 로컬에서 재현할 때 필요한 쪽은 XML 이다.
+          path: |
+            **/build/test-results/test/TEST-*.xml
+            **/build/reports/tests/
           retention-days: 7
