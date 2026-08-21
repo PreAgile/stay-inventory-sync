@@ -16,6 +16,7 @@
 - `README.md` — 문제, 가정, 범위
 - `docs/02-scope.md` — 무엇을 만들지 않기로 했는지
 - `docs/adr/` — 설계 결정과 **기각한 대안**
+- `docs/07-reconciliation.md` — 채널과의 대사 절차 (인바운드를 건드리면 필수)
 
 ---
 
@@ -113,6 +114,17 @@ class Reservation(
 `SELECT FOR UPDATE` 시맨틱이 PostgreSQL과 달라 락 검증이 성립하지 않는다.
 모든 테스트는 Testcontainers 기반 실제 PostgreSQL에서 실행한다.
 
+### 9. 예약 리비전 ack 은 도메인 트랜잭션 커밋 **뒤에** 한다
+
+ack 을 먼저 하고 롤백되면 그 리비전은 feed 에서 영구히 사라진다 — 유실이다.
+커밋 후 ack 이 실패하면 다음 폴링에 다시 오고, 멱등으로 흡수한다.
+**유실과 중복 중 중복을 택한다.** `docs/07-reconciliation.md`
+
+### 10. 채널 웹훅 payload 의 값을 상태에 반영하지 않는다
+
+웹훅은 순서 보장이 없다(Channex 공개 문서). payload 는 버리고 **트리거로만** 쓰며,
+현재 상태는 API 로 당겨온다. 이 규칙을 어기면 순서 역전이 그대로 내부 상태가 된다.
+
 ---
 
 ## 제안하지 말 것
@@ -132,6 +144,9 @@ class Reservation(
 | Lincheck 등 모델 체킹 | ADR-0005 (검증 대상이 인메모리 자료구조라 적용 불가) |
 | Java 전환 | ADR-0005 |
 | Allocated inventory | ADR-0001 |
+| 채널별 재고 카운터 (hybrid 의 순진한 형태) | ADR-0009 (Channex 가 채널별 availability push 를 제공하지 않음) |
+| LWW — 최신 타임스탬프가 이기는 충돌 해소 | ADR-0009 (웹훅 순서 보장이 없어 "최신"을 알 수 없음) |
+| 채널 변경을 항상 우리 값으로 덮어쓰기 (교정 전용) | ADR-0009 (현장 조작과 무한 루프) |
 | 인증/권한 추가 | `docs/02-scope.md` (명시적 범위 제외) |
 | 프론트엔드 | `docs/02-scope.md` |
 | 요금(Rate) 정책 엔진 | `docs/02-scope.md` (직교하는 문제 축) |
