@@ -157,7 +157,9 @@ test("동시 요청 하에서 오버부킹은 발생하지 않는다") { ... }
 
 ```
 INV-1  0 <= sold <= total
-INV-2  sold == 해당 날짜를 포함하는 CONFIRMED 예약 수
+INV-2  sold == 해당 날짜를 포함하고 재고를 점유 중인 예약 수
+       점유 상태 = { CONFIRMED, CHECKED_IN, CHECKED_OUT }
+       차감된 적 없음(PENDING)과 복원됨(CANCELED)은 둘 다 제외한다
 INV-3  checkIn < checkOut
 ```
 

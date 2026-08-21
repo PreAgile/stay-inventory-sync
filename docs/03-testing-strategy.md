@@ -73,7 +73,7 @@ Outbox는 at-least-once다. **정확히 한 번은 발행 측이 아니라 수�
 ```kotlin
 inventoryInvariants.assertAll()
 // INV-1  0 <= sold <= total
-// INV-2  sold == CONFIRMED 예약 수
+// INV-2  sold == 재고 점유 예약 수 (ReservationStatus.occupiesInventory)
 // INV-3  checkIn < checkOut
 ```
 
