@@ -9,40 +9,94 @@ concurrency:
   group: ${{ github.workflow }}-${{ github.ref }}
   cancel-in-progress: true
 
+permissions:
+  contents: read
+
 jobs:
   build-and-test:
     name: Build & Test
     runs-on: ubuntu-latest
     timeout-minutes: 20
 
+    # 테스트 리포트 액션은 체크 런을 생성한다. 기본 토큰은 읽기 전용이므로
+    # 이 권한이 없으면 리포트 단계가 "Resource not accessible by integration"으로 죽는다.
+    permissions:
+      contents: read
+      checks: write
+
     steps:
       - uses: actions/checkout@v4
 
+      # 이 저장소는 지금 문서와 판단 기록만 들고 있다. 빌드 파일이 없는데
+      # ./gradlew 를 실행하면 exit 127 로 죽고, 그러면 모든 PR 이 상시 빨간불이
+      # 되어 진짜 실패와 구분되지 않는다. 상시 실패하는 검사는 검사가 아니다.
+      #
+      # 단계를 지우지 않고 조건으로 감싸는 이유는, 빌드 파일이 커밋되는 순간
+      # 아래 단계들이 스스로 켜져야 하기 때문이다. CI 를 다시 손대야 빌드가
+      # 돌아오는 구조라면 그 손질을 잊는 시점이 온다.
+      - name: Gradle 프로젝트 확인
+        id: probe
+        run: |
+          set -euo pipefail
+
+          project=false
+          for f in settings.gradle.kts settings.gradle build.gradle.kts build.gradle; do
+            if [ -f "$f" ]; then project=true; break; fi
+          done
+
+          if [ "$project" = false ]; then
+            echo "present=false" >> "$GITHUB_OUTPUT"
+            echo "::notice title=CI::빌드 파일이 없다. 문서 전용 상태로 보고 빌드·테스트를 건너뛴다."
+            exit 0
+          fi
+
+          # 프로젝트는 있는데 래퍼가 없는 경우를 조용히 건너뛰면 빌드가 꺼진 것을
+          # 아무도 모른다. 침묵이 아니라 실패로 드러낸다.
+          if [ ! -x ./gradlew ]; then
+            echo "::error title=CI::Gradle 프로젝트가 있는데 실행 가능한 ./gradlew 가 없다. 래퍼를 커밋한다."
+            exit 1
+          fi
+
+          echo "present=true" >> "$GITHUB_OUTPUT"
+          echo "::notice title=CI::Gradle 프로젝트를 찾았다. 빌드·테스트를 실행한다."
+
       - name: Set up JDK 21
+        if: steps.probe.outputs.present == 'true'
         uses: actions/setup-java@v4
         with:
           distribution: temurin
           java-version: '21'
 
       - name: Setup Gradle
+        if: steps.probe.outputs.present == 'true'
         uses: gradle/actions/setup-gradle@v4
 
       # ubuntu-latest 러너에는 Docker가 사전 설치되어 있으므로
       # Testcontainers가 별도 설정 없이 동작한다.
       - name: Build & test (Kotlin)
+        if: steps.probe.outputs.present == 'true'
         run: ./gradlew build --no-daemon
 
+      # 리포트 게시는 테스트 결과를 보여주는 일이지 판정하는 일이 아니다.
+      # 포크 PR·Dependabot 실행은 permissions 블록과 무관하게 토큰이 읽기 전용이라
+      # 체크 생성이 실패한다. 그때 잡 전체를 빨간불로 만들면 이 PR 이 없앤 문제가
+      # 형태만 바꿔 돌아온다. 게시 실패는 게시 실패로만 남긴다.
       - name: Publish test report
+        if: always() && steps.probe.outputs.present == 'true'
+        continue-on-error: true
         uses: mikepenz/action-junit-report@v5
-        if: always()
         with:
           report_paths: '**/build/test-results/test/TEST-*.xml'
           check_name: Test Results
 
       - name: Upload test artifacts
+        if: failure() && steps.probe.outputs.present == 'true'
         uses: actions/upload-artifact@v4
-        if: failure()
         with:
           name: test-reports
-          path: build/reports/tests/
+          # HTML 리포트만 올리면 게시 단계가 읽는 원본 XML 이 빠진다.
+          # 실패를 로컬에서 재현할 때 필요한 쪽은 XML 이다.
+          path: |
+            **/build/test-results/test/TEST-*.xml
+            **/build/reports/tests/
           retention-days: 7
