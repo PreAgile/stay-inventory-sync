@@ -147,8 +147,15 @@ inventoryInvariants.assertAll()
 - domain 패키지는 spring-web, jpa 어노테이션에 의존하지 않는다
 - ChannelAdapter 구현체는 Repository를 직접 참조하지 않는다
 - 재고를 변경하는 코드는 InventoryService를 통해서만 접근한다
+- 엔티티에 연관 매핑 어노테이션(`@OneToMany`/`@ManyToOne`/`@ManyToMany`)이 없다
+- Outbox 릴레이 패키지는 JPA Repository 에 의존하지 않는다
 - OutboxEvent 삽입은 도메인 트랜잭션 내부에서만 일어난다
 ```
+
+연관 매핑 금지와 릴레이 격리, 이 두 규칙은 **dirty checking 우회 경로를 봉인한다.**
+연관을 타고 들어가 필드를 바꾸면 `InventoryService` 에 대한 정적 참조가 생기지 않으므로
+"재고를 변경하는 코드는 `InventoryService` 를 통해서만" 규칙이 UPDATE 를 놓친다.
+막을 수 없는 경로는 아예 만들지 않는다 (ADR-0008).
 
 마지막 규칙이 핵심이다. Outbox가 별도 트랜잭션에서 삽입되면
 dual-write 문제가 그대로 돌아온다. 이건 리뷰로 막을 게 아니라 컴파일 타임에 막는다.
