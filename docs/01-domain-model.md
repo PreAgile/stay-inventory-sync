@@ -540,6 +540,90 @@ INSERT 는 기존 행과 경합하지 않으므로 이 순서가 락 구조를 �
 
 ---
 
+## 재고 복원 알고리즘
+
+차감의 거울상이다. **다만 대칭이 아닌 지점이 하나 있고, 그것이 이 알고리즘의 전부다.**
+
+```
+0. 락 순서: reservation -> daily_inventory              ← ADR-0011. 한 트랜잭션 안이다
+1. reservation 조건부 UPDATE
+      UPDATE reservation SET status = 'CANCELED', updated_at = now()
+       WHERE id = ? AND status = 'CONFIRMED'
+2. rowcount 0 이면 여기서 끝. 재고를 잠그지 않고 커밋한다   ← 멱등. 2xx 를 반환한다
+3. 대상 날짜 목록 생성: [check_in, check_out)
+4. 날짜를 오름차순 정렬                                ← 데드락 방지 (ADR-0002)
+5. 각 날짜 행을 SELECT ... FOR UPDATE 로 잠금
+6. sold -= room_count                                  ← A7. 1 이 아니다
+7. 동일 트랜잭션에서 outbox_event INSERT               ← 절대 규칙 3
+```
+
+### 1번이 세 가지를 동시에 준다
+
+예약 행에 **별도 락을 잡지 않는다.** `UPDATE` 자체가 행 락을 잡고 `WHERE` 절이 중복을 걸러낸다.
+`SELECT FOR UPDATE` → 검증 → `UPDATE` 세 단계가 한 문장으로 접힌다.
+
+| 얻는 것 | 이유 |
+|---|---|
+| **동시 취소 방어** | 두 번째 트랜잭션은 `rowcount` 0 → 복원을 실행하지 않는다 |
+| **취소 웹훅 멱등** | 이미 취소된 건에 2xx → 채널 재시도를 유발하지 않는다 (절대 규칙 5) |
+| **락 순서 강제** | `reservation` → `daily_inventory` 가 **코드 구조로 강제된다** (ADR-0011) |
+
+세 번째가 특히 값을 한다. **`rowcount` 를 봐야 다음 단계로 갈지 알 수 있으므로,
+순서를 어기려면 코드를 뒤집어야 한다.** 규칙을 지키는 것이 아니라 어길 수 없는 형태다.
+
+### 왜 동시 취소가 일상적인 입력인가
+
+취소 웹훅도 **at-least-once** 다(`A4`). 같은 취소가 두 번 오는 것은 예외가 아니라 계약의 일부다.
+방어가 없으면 이렇게 된다.
+
+```
+① SELECT reservation  -> CONFIRMED
+② SELECT reservation  -> CONFIRMED      <- 둘 다 통과한다
+① 재고 락, sold -= 1, CANCELED, commit
+② 재고 락, sold -= 1, CANCELED, commit
+```
+
+**예약은 1건인데 `sold` 가 2 줄었다.** 재고가 부풀고 그 자리에 새 예약이 들어오면 **오버부킹**이다.
+`T3`(#5)는 예약 웹훅 중복만 다루고 취소 웹훅 중복은 다루지 않는다.
+
+### `WHERE status = 'CONFIRMED'` 가 제외 목록 전체를 대신한다
+
+절대 규칙 7 의 비대칭이 **조건문이 아니라 쿼리 조건으로 표현된다.**
+
+| 취소·종료가 오는 상태 | 복원 | 왜 |
+|---|---|---|
+| `CONFIRMED` | **한다** | 차감했고 아직 되돌리지 않았다 |
+| `HELD` · `PENDING_APPROVAL` | 아니다 | **차감된 적이 없다.** 선점은 `INV-4` 가 따로 센다 |
+| `EXPIRED` · `REJECTED` | 아니다 | 차감된 적이 없다 |
+| `TERMINATED` | 아니다 | 그 날짜는 이미 소비됐다 |
+| `CANCELED` | 아니다 | 이미 되돌렸다 |
+
+**제외 목록을 관리하지 않는다.** 조건 한 줄이 다섯 경우를 모두 걸러내고,
+**상태가 늘어도 이 코드를 고치지 않는다** — 새 상태는 자동으로 복원 대상에서 빠진다.
+
+`ADR-0010` 이 상태를 5개에서 9개로 늘렸는데 이 조건이 그대로 유효한 것이 그 증거다.
+`CHECKED_IN -> CANCELED` 를 만들지 않고 `TERMINATED` 로 보낸 것도 이 조건을 지키기 위함이다.
+
+### 노쇼 처리 — 같은 패턴, 재고 경로 없음
+
+```
+UPDATE reservation SET status = 'TERMINATED', updated_at = now()
+ WHERE id = ? AND status = 'CHECKED_IN'
+```
+
+**재고를 건드리지 않는다.** `TERMINATED` 가 점유 집합에 있으므로 `sold` 는 그대로다.
+같은 조건부 UPDATE 패턴이지만 **재고 경로가 없는 전이**이며, 그래서 `T5` · `T6` 의 대상이 아니다.
+
+취소·종료 경로를 한곳에 모아 두면 패턴이 일관되게 적용된다.
+
+### 선점 해제와의 차이
+
+선점(`HELD` · `PENDING_APPROVAL`)에서 오는 종료는 **복원이 아니다.**
+`sold` 에 들어간 적이 없으므로 되돌릴 것이 없고, `inventory_hold.released_at` 마킹만 한다.
+만료는 시간 조건으로 판정되므로 마킹조차 정합성 경로가 아니다 (`ADR-0010` 결정 2·6).
+
+---
+
 ## 구현 노트: 엔티티는 `data class`가 아니다
 
 Kotlin으로 JPA 엔티티를 만들 때 가장 흔한 실수이므로 명시한다.
