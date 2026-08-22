@@ -248,21 +248,26 @@ class ChannelCapTest(
 
     // ── 두 레인 ───────────────────────────────────────────────────────────
     test("정책 통보가 재고 통보를 낡게 만들지 않는다 — 레인이 다르다") {
-        // Given: 같은 (룸타입, 날짜) 에 재고 통보와 정책 통보가 함께 대기한다
+        // Given: 같은 (룸타입, 날짜) 에 **재고 통보 둘**과 정책 통보 하나.
+        //
+        // 재고를 두 번 움직이는 것이 이 테스트의 전부다. 한 번만 움직이면
+        // 재고 통보도 버전 1, 정책 통보도 버전 1 이 되어 `>` 비교가 아예
+        // 발동하지 않는다 -- 그러면 키를 하나로 합쳐 놔도 통과한다.
+        // 실제로 그렇게 짰다가 반증 실험이 통과해서 알았다.
         val roomTypeId = fixture.seedGrid(march1, days = 2, physicalTotal = 10)
-        reserve(roomTypeId, roomCount = 1)
-        policies.setCap(roomTypeId, march1, channelC, value = 5)
+        reserve(roomTypeId, roomCount = 1) // 재고 v1
+        reserve(roomTypeId, roomCount = 1) // 재고 v2
+        policies.setCap(roomTypeId, march1, channelC, value = 5) // 정책 v1
 
         // When: 한 배치로 집는다
         val report = relay.drain(limit = 10)
 
-        // Then: 둘 다 나가야 한다.
+        // Then: 재고는 최신 하나만, 정책은 그대로 나간다.
         //
-        // aggregate_type 을 키에서 빼면 정책 통보(버전 1)와 재고 통보(버전 1)가
-        // 같은 키로 묶여 한쪽이 건너뛰어진다. 캡을 바꿨다고 재고 통보가 사라지면
-        // 채널은 잔여를 영영 모른다
+        // 키를 합치면 정책 v1 이 재고 v2 보다 낡은 것으로 판정돼 건너뛰어진다.
+        // 캡을 걸었는데 채널에 안 나가고, 우리 장부만 5 로 남는다
         report.published shouldBe 2
-        report.superseded shouldBe 0
+        report.superseded shouldBe 1
         adapter.capFor(channelC, roomTypeId, march1) shouldBe 5
         adapter.exposedFor(channelC, roomTypeId, march1) shouldBe 5
     }
