@@ -185,6 +185,21 @@ class ArchitectureTest : FunSpec({
             .check(production)
     }
 
+    test("재동기화는 도메인을 쓰지 않는다 — 최종 방어선이 정합성을 깰 수 없어야 한다") {
+        // Given: resync 패키지
+        // Then: 이 경로가 쓰기를 하면 최종 방어선 자체가 정합성 사고의 원인이
+        // 될 수 있고, 그러면 믿을 수 없다. 읽고 보내는 것만 한다
+        noClasses()
+            .that().resideInAPackage("..stayinventory.resync..")
+            .should().dependOnClassesThat().resideInAnyPackage(
+                "..stayinventory.inventory..",
+                "..stayinventory.persistence..",
+                "org.springframework.data..",
+            )
+            .because("재동기화가 도메인을 만지면 최종 방어선을 믿을 근거가 사라진다")
+            .check(production)
+    }
+
     // ── 아직 오지 않은 규칙 ────────────────────────────────────────────────
     test("대상이 생기면 규칙도 함께 와야 한다 — 미착수 패키지 목록") {
         // Given: docs/03-testing-strategy.md 가 규칙을 약속했지만 대상이 없는 패키지
