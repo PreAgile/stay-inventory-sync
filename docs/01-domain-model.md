@@ -458,6 +458,8 @@ FK 를 둔다. ERD 가 관계를 표시하므로 DDL 도 그것을 강제해야 
 ### 선점 획득 알고리즘
 
 ```
+0. 락 순서: reservation -> daily_inventory              ← ADR-0011
+   inventory_hold 는 3번 락 아래에서만 만진다            ← 절대 규칙 11
 1. 대상 날짜 목록 생성: [check_in, check_out)
 2. 날짜를 오름차순 정렬                                ← 데드락 방지 (ADR-0002)
 3. 각 날짜 행을 SELECT ... FOR UPDATE 로 잠금          ← 직렬화 지점
@@ -480,7 +482,8 @@ INSERT 는 기존 행과 경합하지 않으므로 이 순서가 락 구조를 �
 ### 선점 해제와 확정
 
 ```
-확정   [트랜잭션]  reservation 조건부 UPDATE
+확정   [트랜잭션]  락 순서는 reservation -> daily_inventory (ADR-0011)
+                  reservation 조건부 UPDATE
                     즉시확정 경로 : WHERE status = 'HELD'
                     승인형 경로   : WHERE status = 'PENDING_APPROVAL'
                   daily_inventory 잠금, sold += room_count
@@ -517,6 +520,7 @@ INSERT 는 기존 행과 경합하지 않으므로 이 순서가 락 구조를 �
 ## 재고 차감 알고리즘
 
 ```
+0. 락 순서: reservation -> daily_inventory              ← ADR-0011. 한 트랜잭션 안이다
 1. 예약 대상 날짜 목록 생성: [check_in, check_out)   ← 체크아웃 당일은 미포함
 2. 날짜를 오름차순 정렬                                ← 데드락 방지 (ADR-0002)
 3. 각 날짜 행을 SELECT ... FOR UPDATE 로 잠금
