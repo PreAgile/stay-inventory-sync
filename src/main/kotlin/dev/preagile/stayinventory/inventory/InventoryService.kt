@@ -121,7 +121,7 @@ class InventoryService(
         locked.forEach { (date, row) ->
             outbox.save(
                 OutboxEvent(
-                    aggregateType = "DAILY_INVENTORY",
+                    aggregateType = AGGREGATE_DAILY_INVENTORY,
                     // 이 컬럼에 FK 가 없는 이유가 여기 있다. 다형 참조이므로
                     // 대상 테이블을 하나로 고정할 수 없다.
                     aggregateId = row.roomTypeId,
@@ -129,7 +129,7 @@ class InventoryService(
                     // 있으므로 버전은 같은 키 안에서 단조 증가한다 (ADR-0012).
                     roomTypeId = row.roomTypeId,
                     stayDate = date,
-                    version = outbox.nextVersionFor(row.roomTypeId, date),
+                    version = outbox.nextVersionFor(AGGREGATE_DAILY_INVENTORY, row.roomTypeId, date),
                     eventType = "INVENTORY_CHANGED",
                     payload = objectMapper.writeValueAsString(
                         InventoryChangedPayload(
@@ -234,11 +234,11 @@ class InventoryService(
         restored.forEach { (date, row) ->
             outbox.save(
                 OutboxEvent(
-                    aggregateType = "DAILY_INVENTORY",
+                    aggregateType = AGGREGATE_DAILY_INVENTORY,
                     aggregateId = row.roomTypeId,
                     roomTypeId = row.roomTypeId,
                     stayDate = date,
-                    version = outbox.nextVersionFor(row.roomTypeId, date),
+                    version = outbox.nextVersionFor(AGGREGATE_DAILY_INVENTORY, row.roomTypeId, date),
                     eventType = "INVENTORY_CHANGED",
                     payload = objectMapper.writeValueAsString(
                         InventoryChangedPayload(
@@ -258,5 +258,10 @@ class InventoryService(
         }
 
         return CancelResult.Restored(reservationId, reservation.roomCount)
+    }
+
+    companion object {
+        /** 재고 통보의 레인. 정책 통보와 버전을 공유하지 않는다 (ADR-0012 개정). */
+        const val AGGREGATE_DAILY_INVENTORY = "DAILY_INVENTORY"
     }
 }

@@ -53,6 +53,7 @@ class RecordingChannelAdapter : ChannelAdapter {
         lastPayloadByKey.clear()
         channelState.clear()
         silentlyDropped.clear()
+        caps.clear()
         forcedResult = null
     }
 
@@ -77,6 +78,7 @@ class RecordingChannelAdapter : ChannelAdapter {
     private companion object {
         val FIELD = FieldReader("""\"%s\"\s*:\s*(-?\d+)""")
         val QUOTED = FieldReader("""\"%s\"\s*:\s*\"([^\"]+)\"""")
+        val BOOLEAN = FieldReader("""\"%s\"\s*:\s*(true|false)""")
     }
 
     private class FieldReader(private val template: String) {
@@ -108,6 +110,54 @@ class RecordingChannelAdapter : ChannelAdapter {
     ): Map<java.time.LocalDate, Int> = channelState
         .filterKeys { (rt, date) -> rt == roomTypeId && date >= from && date < to }
         .mapKeys { (key, _) -> key.second }
+
+    /** 채널이 들고 있는 노출 상한. `(채널, 룸타입, 날짜) -> 캡`. */
+    private val caps = ConcurrentHashMap<Triple<String, Long, java.time.LocalDate>, Int>()
+
+    /**
+     * 채널이 **실제로 손님에게 보여 주는 수**.
+     *
+     * `min(캡, 잔여)` 다. 그리고 **이 계산은 우리가 아니라 채널이 한다** --
+     * 우리는 잔여와 규칙을 따로 보낼 뿐이다. 우리가 미리 곱해서 보내면
+     * 채널마다 다른 재고를 관리하는 셈이 되고, 그것이 `ADR-0001` 이 기각한 배정이다.
+     */
+    fun exposedFor(channel: String, roomTypeId: Long, stayDate: java.time.LocalDate): Int? {
+        val remaining = channelState[roomTypeId to stayDate] ?: return null
+        val cap = caps[Triple(channel, roomTypeId, stayDate)] ?: return remaining
+        return minOf(cap, remaining)
+    }
+
+    fun capFor(channel: String, roomTypeId: Long, stayDate: java.time.LocalDate): Int? =
+        caps[Triple(channel, roomTypeId, stayDate)]
+
+    override fun pushPolicy(idempotencyKey: Long, payload: String): ChannelSyncResult {
+        attemptCounter.incrementAndGet()
+        forcedResult?.let { return it }
+
+        if (!seenKeys.add(idempotencyKey)) {
+            return ChannelSyncResult.Success(deduplicated = true)
+        }
+        appliedCounter.incrementAndGet()
+        lastPayloadByKey[idempotencyKey] = payload
+
+        val roomTypeId = FIELD.find(payload, "roomTypeId")?.toLongOrNull()
+            ?: return ChannelSyncResult.Permanent("roomTypeId 없음")
+        val stayDate = QUOTED.find(payload, "stayDate")?.let(java.time.LocalDate::parse)
+            ?: return ChannelSyncResult.Permanent("stayDate 없음")
+        val channel = QUOTED.find(payload, "channel")
+            ?: return ChannelSyncResult.Permanent("channel 없음")
+
+        val key = Triple(channel, roomTypeId, stayDate)
+        // 공백을 허용해서 읽는다. jsonb 는 저장하면서 키 순서를 바꾸고 공백을
+        // 정규화하므로 `"removed":true` 로 문자열 매칭하면 **저장 후에는 맞지 않는다.**
+        // 조용히 false 가 되어 해제 통보가 아무 일도 하지 않는다.
+        if (BOOLEAN.find(payload, "removed") == "true") {
+            caps.remove(key)
+        } else {
+            FIELD.find(payload, "value")?.toIntOrNull()?.let { caps[key] = it }
+        }
+        return ChannelSyncResult.Success(deduplicated = false)
+    }
 
     override fun push(idempotencyKey: Long, payload: String): ChannelSyncResult {
         attemptCounter.incrementAndGet()
