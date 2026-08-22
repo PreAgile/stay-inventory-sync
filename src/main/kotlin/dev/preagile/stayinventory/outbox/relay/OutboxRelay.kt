@@ -59,7 +59,33 @@ class OutboxRelay(
         val adapter = adapters.firstOrNull() ?: return RelayReport()
         var report = RelayReport()
 
-        claimPending(limit, now).forEach { event ->
+        val claimed = claimPending(limit, now)
+
+        // 배치 안에서 같은 키의 낡은 이벤트를 먼저 걸러낸다.
+        //
+        // 부수 효과가 아니라 목적의 절반이다 -- 3박 예약과 그 취소가 한 배치에
+        // 들어오면 같은 키에 통보가 둘 있고, 낡은 쪽을 보내 봐야 바로 덮어써진다.
+        // 레이트 리밋만 태운다.
+        val newestInBatch = claimed
+            .filter { it.orderingKey != null }
+            .groupBy { it.orderingKey }
+            .mapValues { (_, events) -> events.maxOf { requireNotNull(it.version) } }
+
+        claimed.forEach { event ->
+            val key = event.orderingKey
+            if (key != null) {
+                val version = requireNotNull(event.version)
+                // 이 배치에 더 새로운 것이 있거나, 이미 더 새로운 것이 나갔다면
+                // 이 이벤트는 보낼 이유가 없다.
+                val newerExists = newestInBatch.getValue(key) > version ||
+                    (highestPublishedVersion(key.first, key.second) ?: 0L) > version
+                if (newerExists) {
+                    markSuperseded(event.id)
+                    report = report.copy(superseded = report.superseded + 1)
+                    return@forEach
+                }
+            }
+
             // 락 밖이다. 여기서 네트워크를 기다려도 재고 행은 아무도 붙잡고 있지 않다.
             val result = runCatching { adapter.push(event.id, event.payload) }
                 .getOrElse { ChannelSyncResult.Retryable("어댑터 예외: ${it.message}") }
@@ -138,7 +164,8 @@ class OutboxRelay(
                     LIMIT ?
                     FOR UPDATE SKIP LOCKED
              )
-            RETURNING id, aggregate_type, aggregate_id, event_type, payload::text, retry_count
+            RETURNING id, aggregate_type, aggregate_id, event_type, payload::text, retry_count,
+                      room_type_id, stay_date, version
             """.trimIndent(),
             { rs, _ ->
                 PendingOutboxEvent(
@@ -148,6 +175,9 @@ class OutboxRelay(
                     eventType = rs.getString(4),
                     payload = rs.getString(5),
                     retryCount = rs.getInt(6),
+                    roomTypeId = rs.getObject(7) as Long?,
+                    stayDate = rs.getObject(8, java.time.LocalDate::class.java),
+                    version = rs.getObject(9) as Long?,
                 )
             },
             java.sql.Timestamp.from(now.plus(LEASE)),
@@ -180,6 +210,29 @@ class OutboxRelay(
             java.sql.Timestamp.from(nextAttemptAt),
             event.id,
         )
+    }
+
+    /**
+     * 그 키로 **이미 나간** 가장 큰 버전. 없으면 null.
+     *
+     * `PUBLISHED` 만 센다. `SUPERSEDED` 는 나간 적이 없으므로 채널 상태와 무관하고,
+     * `PENDING` 은 아직 나가지 않았다 -- 그것까지 세면 아직 안 나간 새 이벤트
+     * 때문에 지금 나가야 할 이벤트가 건너뛰어진다.
+     */
+    fun highestPublishedVersion(roomTypeId: Long, stayDate: java.time.LocalDate): Long? =
+        jdbc.queryForObject(
+            """
+            SELECT MAX(version) FROM outbox_event
+             WHERE room_type_id = ? AND stay_date = ? AND status = 'PUBLISHED'
+            """.trimIndent(),
+            Long::class.javaObjectType,
+            roomTypeId,
+            stayDate,
+        )
+
+    /** 낡아서 보내지 않았다. 발행한 적 없으므로 `PUBLISHED` 로 적지 않는다. */
+    fun markSuperseded(id: Long) {
+        jdbc.update("UPDATE outbox_event SET status = 'SUPERSEDED' WHERE id = ?", id)
     }
 
     fun markDead(id: Long) {
@@ -221,13 +274,26 @@ data class PendingOutboxEvent(
     val eventType: String,
     val payload: String,
     val retryCount: Int,
-)
+    val roomTypeId: Long? = null,
+    val stayDate: java.time.LocalDate? = null,
+    val version: Long? = null,
+) {
+    /** 순서 판정이 가능한 이벤트인가. 셋 다 있거나 셋 다 없다 (DB CHECK). */
+    val orderingKey: Pair<Long, java.time.LocalDate>?
+        get() = if (roomTypeId != null && stayDate != null && version != null) {
+            roomTypeId to stayDate
+        } else {
+            null
+        }
+}
 
 data class RelayReport(
     val published: Int = 0,
     val retried: Int = 0,
     val rateLimited: Int = 0,
     val dead: Int = 0,
+    /** 낡아서 보내지 않은 건수. 이 숫자가 곧 아낀 채널 호출이다. */
+    val superseded: Int = 0,
 ) {
-    val handled: Int get() = published + retried + rateLimited + dead
+    val handled: Int get() = published + retried + rateLimited + dead + superseded
 }

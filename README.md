@@ -345,7 +345,7 @@ docker compose up -d
 | [04-capacity-and-limits](docs/04-capacity-and-limits.md) | 진짜 병목은 어디인가 |
 | [05-ai-collaboration](docs/05-ai-collaboration.md) | AI 협업의 경계와 판단 기록 |
 | [06-backlog](docs/06-backlog.md) | 우선순위와 착수 기준 |
-| [ADR](docs/adr/) | 설계 결정과 **기각한 대안** (`0001`~`0010`. `0008` 은 영속성 매핑 계층) |
+| [ADR](docs/adr/) | 설계 결정과 **기각한 대안** (`0001`~`0012`. `0008` 은 영속성 매핑 계층, `0012` 는 Outbox 순서) |
 | [AGENTS.md](AGENTS.md) | 코딩 에이전트용 규약 (`CLAUDE.md`는 심볼릭 링크) |
 | [CONTRIBUTING.md](CONTRIBUTING.md) | 사람용 진입점 — 읽는 순서, 라벨·마일스톤 체계, PR 규약 |
 

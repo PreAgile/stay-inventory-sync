@@ -111,9 +111,14 @@ class InventoryService(
             outbox.save(
                 OutboxEvent(
                     aggregateType = "DAILY_INVENTORY",
-                    // 이 컬럼에 FK 가 없는 이유가 여기 있다. 재고의 키는 (룸타입, 날짜)
-                    // 복합인데 컬럼은 BIGINT 하나다. 나머지 절반은 payload 에 있다.
+                    // 이 컬럼에 FK 가 없는 이유가 여기 있다. 다형 참조이므로
+                    // 대상 테이블을 하나로 고정할 수 없다.
                     aggregateId = row.roomTypeId,
+                    // 순서 판정용 키와 버전. 이 트랜잭션이 그 재고 행 락을 쥐고
+                    // 있으므로 버전은 같은 키 안에서 단조 증가한다 (ADR-0012).
+                    roomTypeId = row.roomTypeId,
+                    stayDate = date,
+                    version = outbox.nextVersionFor(row.roomTypeId, date),
                     eventType = "INVENTORY_CHANGED",
                     payload = objectMapper.writeValueAsString(
                         InventoryChangedPayload(
@@ -220,6 +225,9 @@ class InventoryService(
                 OutboxEvent(
                     aggregateType = "DAILY_INVENTORY",
                     aggregateId = row.roomTypeId,
+                    roomTypeId = row.roomTypeId,
+                    stayDate = date,
+                    version = outbox.nextVersionFor(row.roomTypeId, date),
                     eventType = "INVENTORY_CHANGED",
                     payload = objectMapper.writeValueAsString(
                         InventoryChangedPayload(
