@@ -94,19 +94,51 @@ class OutboxRelay(
     }
 
     /**
-     * 발행 대기 이벤트를 꺼낸다.
+     * 발행 대기 이벤트를 **집어 오면서 동시에 임대(lease)한다.**
      *
      * `id` 순이다. 같은 키의 이벤트가 생성 순서대로 나가야 하고, 그 순서가
      * 백오프 때문에 깨지는 것이 `#9` 가 다루는 문제다.
+     *
+     * ## 왜 SELECT 가 아니라 UPDATE ... RETURNING 인가
+     *
+     * `#8` 은 폴링 쿼리에 `FOR UPDATE SKIP LOCKED` 를 붙이라고 적었다. 그 조각만으로는
+     * 다중 인스턴스가 막히지 않는다 -- **행 락은 트랜잭션이 끝나면 풀리는데**,
+     * 집기와 발행이 다른 트랜잭션이면 집자마자 락이 사라진다. 그 사이에 다른
+     * 인스턴스가 같은 행을 집는다.
+     *
+     * 락을 발행 끝까지 쥐는 것은 더 나쁘다 -- **락을 쥔 채 외부 I/O 를 기다리게 되고**
+     * (절대 규칙 4), 채널이 느린 만큼 그 행들이 묶인다.
+     *
+     * 그래서 **집기와 임대를 한 문장으로 접는다.** `next_attempt_at` 을 앞으로
+     * 밀어 두면 그 시간 동안 다른 인스턴스의 `WHERE` 절에 걸리지 않는다.
+     * 발행은 어떤 락도 쥐지 않은 상태에서 일어난다.
+     *
+     * ```
+     * UPDATE ... SET next_attempt_at = now + LEASE
+     *  WHERE id IN (SELECT ... FOR UPDATE SKIP LOCKED)   ← 여기의 락은 이 문장 동안만
+     * RETURNING ...
+     * ```
+     *
+     * `SKIP LOCKED` 는 그 짧은 구간에서도 **인스턴스끼리 서로 기다리지 않게** 한다.
+     * 없으면 B 는 A 의 `UPDATE` 가 커밋될 때까지 막혀서, 인스턴스를 늘려도
+     * 처리량이 늘지 않는다.
+     *
+     * **임대가 만료되면 그 이벤트는 다시 잡힌다.** 발행 도중 프로세스가 죽어도
+     * 이벤트를 잃지 않는다 -- 그리고 그때 일어나는 재발행이 `T4` 가 다루는 것이다.
      */
     fun claimPending(limit: Int, now: Instant = Instant.now()): List<PendingOutboxEvent> =
         jdbc.query(
             """
-            SELECT id, aggregate_type, aggregate_id, event_type, payload::text, retry_count
-              FROM outbox_event
-             WHERE status = 'PENDING' AND next_attempt_at <= ?
-             ORDER BY id
-             LIMIT ?
+            UPDATE outbox_event
+               SET next_attempt_at = ?
+             WHERE id IN (
+                   SELECT id FROM outbox_event
+                    WHERE status = 'PENDING' AND next_attempt_at <= ?
+                    ORDER BY id
+                    LIMIT ?
+                    FOR UPDATE SKIP LOCKED
+             )
+            RETURNING id, aggregate_type, aggregate_id, event_type, payload::text, retry_count
             """.trimIndent(),
             { rs, _ ->
                 PendingOutboxEvent(
@@ -118,6 +150,7 @@ class OutboxRelay(
                     retryCount = rs.getInt(6),
                 )
             },
+            java.sql.Timestamp.from(now.plus(LEASE)),
             java.sql.Timestamp.from(now),
             limit,
         )
@@ -163,6 +196,15 @@ class OutboxRelay(
 
         /** 429 를 받으면 최소 1분 중지 — Channex 공개 문서 권고. */
         const val RATE_LIMIT_MIN_WAIT_SECONDS = 60L
+
+        /**
+         * 임대 기간. 이 시간 안에 발행이 끝나지 않으면 다른 인스턴스가 다시 집는다.
+         *
+         * 짧으면 느린 채널 응답을 기다리는 동안 중복 발행이 늘고, 길면 죽은
+         * 인스턴스가 쥐고 있던 이벤트가 그만큼 늦게 나간다. 채널 호출 타임아웃보다
+         * 넉넉하게 잡되 백오프 최소값(1분)과 같은 자리에 둔다.
+         */
+        val LEASE: Duration = Duration.ofMinutes(1)
     }
 }
 

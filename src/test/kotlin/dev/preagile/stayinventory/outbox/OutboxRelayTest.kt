@@ -127,16 +127,20 @@ class OutboxRelayTest(
         reserve(roomTypeId)
         val eventId = pendingIds().single()
 
-        // When ①: 채널 호출은 성공했는데 마킹 직전에 프로세스가 죽는다
-        val claimed = relay.claimPending(10).single()
-        relay.claimPending(10) // 아직 PENDING 이므로 다시 잡힌다
-        val first = relay.let { adapter.push(claimed.id, claimed.payload) }
+        // When ①: 이벤트를 집어 채널 호출까지 성공했는데 마킹 직전에 죽는다
+        val now = Instant.now()
+        val claimed = relay.claimPending(10, now).single()
+        val first = adapter.push(claimed.id, claimed.payload)
         first.shouldBeInstanceOf<ChannelSyncResult.Success>().deduplicated shouldBe false
         // markPublished 를 부르지 않는다. 이것이 그 창이다.
         statusOf(eventId) shouldBe "PENDING"
 
-        // When ②: 재기동. 릴레이가 같은 이벤트를 다시 집는다
-        val report = relay.drain()
+        // 죽은 인스턴스가 쥔 임대가 살아 있는 동안에는 아무도 집지 않는다.
+        // 이것이 없으면 발행이 느린 채널에서 중복 호출이 계속 늘어난다
+        relay.drain(now = now).handled shouldBe 0
+
+        // When ②: 임대가 만료된 뒤 다른 인스턴스(또는 재기동한 자신)가 집는다
+        val report = relay.drain(now = now.plus(Duration.ofMinutes(2)))
 
         // Then: 호출은 두 번 나갔지만 **부작용은 한 번**이다
         report.published shouldBe 1
