@@ -198,13 +198,21 @@ channel_policy   PK(room_type_id, stay_date, channel, kind)       규칙 중복
 조용하다. `NULLS NOT DISTINCT` 는 PostgreSQL 15 이상이며, 이것이 스택 하한을 고정한다.
 
 **④ `INBOUND_MESSAGE` 에 선이 하나도 없는 것은 의도한 것이다.**
-`kind` 가 `BOOKING` 이면 예약을, `POLICY` 면 `(룸타입, 날짜, 채널)` 을 가리킨다 —
-**참조 대상이 하나가 아니라서** 컬럼 하나로 묶을 수 없다. 그리고 에코와 해석 실패는
+`kind` 가 `BOOKING` 이면 `reservation` 을, `POLICY` 면 `channel_policy` 를 가리킨다 —
+**다른 테이블이고 개수도 다르다.**
+
+```text
+BOOKING  ->  reservation      0~1 건
+POLICY   ->  channel_policy   0~N 건
+             (room_type_id, stay_date, channel, kind) 에서 kind 별로 여러 행
+```
+
+컬럼 하나는 **다른 테이블도, 집합도** 가리킬 수 없다. 그리고 에코와 해석 실패는
 **끝까지 대상이 없는 것이 정상**이다. `payload` 는 받은 그대로 두고, 무엇을 가리키는지는
 해석의 산출물로 따로 둔다.
 
 > nullable FK 로 저장 자체는 가능하다. FK 는 값이 있을 때만 검사하므로
-> "FK 를 걸면 저장할 수 없다"는 근거가 아니다. 안 두는 이유는 위 셋이다
+> **"FK 를 걸면 저장할 수 없다"는 근거가 아니다.** 안 두는 이유는 위와 같다
 > (`docs/01-domain-model.md`).
 
 **⑤ `sequence_key` 는 NULL 일 수 있고, 그래서 `NULLS NOT DISTINCT` 가 필요하다.**
