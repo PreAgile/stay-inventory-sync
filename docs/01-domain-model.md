@@ -7,6 +7,7 @@ erDiagram
     PROPERTY ||--o{ ROOM_TYPE : "운영한다"
     ROOM_TYPE ||--o{ DAILY_INVENTORY : "날짜별 재고를 갖는다"
     ROOM_TYPE ||--o{ RESERVATION : "예약 대상이 된다"
+    RESERVATION ||--o{ INVENTORY_HOLD : "확정 전 재고를 선점한다"
     RESERVATION ||--o{ OUTBOX_EVENT : "이벤트를 발생시킨다"
 
     PROPERTY {
@@ -38,13 +39,23 @@ erDiagram
         bigint   room_type_id FK
         date     check_in
         date     check_out
-        varchar  status       "PENDING|CONFIRMED|CHECKED_IN|CHECKED_OUT|CANCELED"
+        varchar  status       "HELD|PENDING_APPROVAL|CONFIRMED|CHECKED_IN|CHECKED_OUT|CANCELED|EXPIRED|REJECTED|TERMINATED"
         int      room_count   "점유 객실 수. 기본 1 (A7)"
         varchar  channel      "DIRECT|AIRBNB|YANOLJA"
         varchar  channel_reservation_id UK "channel과 복합 유니크"
         varchar  guest_name
         timestamptz created_at
         timestamptz updated_at
+    }
+
+    INVENTORY_HOLD {
+        bigint   id PK
+        bigint   room_type_id FK
+        date     stay_date
+        bigint   reservation_id FK "다일 선점을 묶는 키를 겸한다"
+        int      room_count       "reservation 과 같은 값"
+        timestamptz expires_at    "만료 판정"
+        timestamptz released_at   "전환·해제 판정. NULL 이면 살아 있다"
     }
 
     OUTBOX_EVENT {
@@ -91,14 +102,22 @@ erDiagram
 
 ```mermaid
 stateDiagram-v2
-    [*] --> PENDING
-    PENDING --> CONFIRMED : 재고 차감 성공
-    PENDING --> CANCELED : 재고 부족 / 결제 실패
+    [*] --> HELD : 선점 획득
+    HELD --> EXPIRED : 결제 시한 초과 / 결제 실패
+    HELD --> CONFIRMED : 결제 성공 (즉시확정)
+    HELD --> PENDING_APPROVAL : 결제 성공 (승인형)
+    PENDING_APPROVAL --> CONFIRMED : 사장님 승인
+    PENDING_APPROVAL --> REJECTED : 사장님 거절
+    PENDING_APPROVAL --> EXPIRED : 승인 시한 초과
     CONFIRMED --> CHECKED_IN : 체크인
     CONFIRMED --> CANCELED : 취소 (재고 복원)
     CHECKED_IN --> CHECKED_OUT : 체크아웃
+    CHECKED_IN --> TERMINATED : 노쇼 (복원 없음)
     CHECKED_OUT --> [*]
+    TERMINATED --> [*]
     CANCELED --> [*]
+    EXPIRED --> [*]
+    REJECTED --> [*]
 ```
 
 전이 규칙은 `ReservationStatus` enum에 명시적으로 선언하고, 불법 전이는 예외로 막는다.
@@ -157,6 +176,12 @@ INV-2  모든 (room_type_id, stay_date)에 대해
        sold == SUM(해당 날짜를 포함하고 재고를 점유 중인 예약의 room_count)
 
 INV-3  모든 CONFIRMED 예약에 대해 check_in < check_out
+
+INV-4  모든 (room_type_id, stay_date)에 대해
+       sold + SUM(유효 선점의 room_count) <= total          ← 과선점 금지 (ADR-0010)
+
+       유효 선점 = expires_at > now()          만료되지 않았고
+                   AND released_at IS NULL     아직 확정·해제되지도 않았다
 ```
 
 INV-2가 실질적 핵심이다. 재고 카운터와 예약 사실이 어긋나는 순간을 잡아낸다.
@@ -285,17 +310,32 @@ sold = 0  ->  "3월 1일 디럭스룸은 안 팔렸다"  ->  같은 방이 다�
 
 ```kotlin
 enum class ReservationStatus {
-    PENDING, CONFIRMED, CHECKED_IN, CHECKED_OUT, CANCELED;
+    HELD, PENDING_APPROVAL,                              // 선점 보유. sold 에 없다
+    CONFIRMED, CHECKED_IN, CHECKED_OUT, TERMINATED,      // 점유
+    EXPIRED, REJECTED, CANCELED;                         // 어느 쪽도 아니다
 
     val occupiesInventory: Boolean get() = this in OCCUPYING
+    val holdsInventory: Boolean get() = this in HOLDING
 
     companion object {
-        val OCCUPYING = setOf(CONFIRMED, CHECKED_IN, CHECKED_OUT)
+        val OCCUPYING = setOf(CONFIRMED, CHECKED_IN, CHECKED_OUT, TERMINATED)
+        val HOLDING = setOf(HELD, PENDING_APPROVAL)
     }
 }
 ```
 
 불변식 검증기와 도메인 로직이 같은 정의를 본다. 두 곳이 어긋날 자리가 없다.
+
+세 집합으로 갈린다. `OCCUPYING` 은 `INV-2` 가 쓰고 `HOLDING` 은 `INV-4` 가 쓴다.
+
+```
+점유 (sold 에 반영)  = { CONFIRMED, CHECKED_IN, CHECKED_OUT, TERMINATED }
+선점 (INV-4 로 계산) = { HELD, PENDING_APPROVAL }
+어느 쪽도 아님       = { EXPIRED, REJECTED, CANCELED }
+```
+
+`EXPIRED` · `REJECTED` 는 **`sold` 에 한 번도 들어간 적이 없다.** `CANCELED` 는 들어갔다가 복원됐다.
+결과는 같지만 경로가 다르므로 복원 알고리즘이 이 셋을 다르게 다룬다.
 
 `OCCUPYING` 에 없는 상태는 전부 점유가 아니다. **제외 목록을 따로 관리하지 않는다** —
 관리하면 상태를 추가할 때 두 목록 중 하나를 빼먹는다.
@@ -368,6 +408,64 @@ reservation #2   channel=YANOLJA   channel_reservation_id=ABC123   ← UNIQUE �
 한 칸만 주는 선택(예약을 쪼개기)은 예약 1건이 2건이 되므로 위의 멱등 문제로 되돌아간다.
 
 `DEFAULT 1` 이 기존 개념을 특수 케이스로 흡수한다. **다객실이 예외가 아니라 일반형이 된다.**
+
+---
+
+## 선점(hold) — 확정 전에 재고를 잡아 둔다
+
+판단 근거는 `ADR-0010` 에 있고 여기서는 형태만 적는다.
+
+```sql
+CREATE TABLE inventory_hold (
+    id             BIGSERIAL   PRIMARY KEY,
+    room_type_id   BIGINT      NOT NULL,
+    stay_date      DATE        NOT NULL,   -- daily_inventory 와 같은 결
+    reservation_id BIGINT      NOT NULL,   -- 다일 선점을 묶는 키를 겸한다
+    room_count     INT         NOT NULL,   -- A7. reservation 과 같은 값
+    expires_at     TIMESTAMPTZ NOT NULL,   -- 만료 판정
+    released_at    TIMESTAMPTZ             -- 전환·해제 판정. NULL 이면 살아 있다
+);
+
+CREATE INDEX ix_hold_live ON inventory_hold (room_type_id, stay_date)
+    WHERE released_at IS NULL;
+```
+
+### 선점 획득 알고리즘
+
+```
+1. 대상 날짜 목록 생성: [check_in, check_out)
+2. 날짜를 오름차순 정렬                                ← 데드락 방지 (ADR-0002)
+3. 각 날짜 행을 SELECT ... FOR UPDATE 로 잠금          ← 직렬화 지점
+4. 전 날짜에 대해 sold + SUM(유효 선점) + room_count <= total 검증
+5. 하나라도 실패하면 전체 롤백
+6. 전부 통과하면 reservation INSERT (status = HELD)
+7. 동일 트랜잭션에서 inventory_hold INSERT (날짜당 1행)
+```
+
+**3번에서 잠근 행을 4~7번에서 바꾸지 않는다.** 그 행은 순수하게 뮤텍스로 쓰인다.
+그런데 선점을 잡으려는 모든 트랜잭션이 반드시 그 락을 먼저 지나가므로,
+집계와 INSERT 사이에 다른 트랜잭션이 끼어들 수 없다.
+
+**테이블이 하나 늘었는데 락 순서는 늘지 않는다.** 그래서 절대 규칙 11 이 필요하다 —
+값을 바꾸지 않는 락은 없어도 되는 것처럼 보이고, 지우면 과선점이 열린다.
+
+6번이 7번보다 앞인 이유는 `inventory_hold.reservation_id` 가 NOT NULL 이기 때문이다.
+INSERT 는 기존 행과 경합하지 않으므로 이 순서가 락 구조를 바꾸지 않는다.
+
+### 선점 해제와 확정
+
+```
+확정   [트랜잭션]  reservation 조건부 UPDATE (WHERE status = 'HELD')
+                  daily_inventory 잠금, sold += room_count
+                  inventory_hold.released_at = now()
+                  outbox_event INSERT
+
+만료   판정만 시간 조건으로 한다. sold 는 건드리지 않는다
+       released_at 마킹과 승인 취소 이벤트는 얇은 스케줄러가 발행한다 (ADR-0010 결정 6)
+```
+
+**만료는 재고를 되돌리는 사건이 아니다.** `sold` 에 들어간 적이 없으므로 되돌릴 것이 없다.
+그래서 그 스케줄러는 장애가 나도 정합성을 깨지 않는다.
 
 ---
 
