@@ -7,6 +7,7 @@ import dev.preagile.stayinventory.persistence.DailyInventoryRepository
 import dev.preagile.stayinventory.persistence.OutboxEvent
 import dev.preagile.stayinventory.persistence.OutboxEventRepository
 import dev.preagile.stayinventory.persistence.Reservation
+import dev.preagile.stayinventory.ops.OverbookingPreventedCounter
 import dev.preagile.stayinventory.persistence.ReservationRepository
 import org.springframework.stereotype.Service
 import org.springframework.transaction.annotation.Transactional
@@ -42,6 +43,7 @@ class InventoryService(
     private val reservations: ReservationRepository,
     private val outbox: OutboxEventRepository,
     private val objectMapper: ObjectMapper,
+    private val overbookingPrevented: OverbookingPreventedCounter,
 ) {
 
     @Transactional
@@ -75,6 +77,15 @@ class InventoryService(
         }
 
         if (unavailable.isNotEmpty()) {
+            // 막은 것을 센다. 오버부킹이 일어나지 않았다는 사실에는 로그가 없으므로
+            // 이 숫자가 그 주장을 운영에서 확인하는 유일한 경로다.
+            //
+            // 매진만 센다. 격자 없음은 "막았다" 가 아니라 "재고를 열지 않았다" 는
+            // 신호이고, 함께 세면 설정 실수가 방어 실적으로 보고된다.
+            if (unavailable.any { it.reason == UnavailableReason.SOLD_OUT }) {
+                overbookingPrevented.increment()
+            }
+
             // 아직 아무것도 쓰지 않았다. 롤백할 것이 없고 잠근 행은 커밋 시 풀린다.
             // 부분 성공을 만들지 않으려면 검증이 전부 끝난 뒤에 쓰기 시작해야 한다.
             return ReserveResult.Rejected(unavailable.sortedBy { it.stayDate })
