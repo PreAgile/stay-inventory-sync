@@ -73,28 +73,7 @@ class InventoryConcurrencyTest(
             guestName = "김손님",
         )
 
-    /** [count] 개 작업을 **동시에 출발시킨다.** 순차 실행이면 경합을 증명하지 못한다. */
-    fun runConcurrently(count: Int, task: (Int) -> Unit) {
-        val pool = Executors.newFixedThreadPool(count)
-        val startGate = CountDownLatch(1)
-        val done = CountDownLatch(count)
-        try {
-            repeat(count) { index ->
-                pool.submit {
-                    startGate.await()
-                    try {
-                        task(index)
-                    } finally {
-                        done.countDown()
-                    }
-                }
-            }
-            startGate.countDown()
-            done.await(120, TimeUnit.SECONDS) shouldBe true
-        } finally {
-            pool.shutdownNow()
-        }
-    }
+    fun runConcurrently(count: Int, task: (Int) -> Unit) = runConcurrentlyOrFail(count, task)
 
     // ── T1 ────────────────────────────────────────────────────────────────
     test("T1 — 잔여 1인 날짜에 동시 100건이 들어와도 성공은 정확히 1건이다") {
@@ -289,3 +268,4 @@ private fun java.sql.Connection.lockRow(roomTypeId: Long, stayDate: LocalDate) {
         ps.executeQuery().use { it.next() }
     }
 }
+
