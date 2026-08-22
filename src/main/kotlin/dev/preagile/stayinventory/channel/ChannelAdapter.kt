@@ -18,6 +18,20 @@ interface ChannelAdapter {
      * @param payload 사건 발생 시점의 값. 여기서 다시 계산하지 않는다.
      */
     fun push(idempotencyKey: Long, payload: String): ChannelSyncResult
+
+    /**
+     * 채널이 **지금 들고 있는** 재고를 읽어 온다. 대사(#6)가 쓴다.
+     *
+     * `push` 와 방향이 반대이고 성질도 반대다 -- `push` 는 "우리가 아는 값을
+     * 밀어넣는" 것이고 이쪽은 **"상대가 무엇을 안다고 하는가" 를 묻는** 것이다.
+     * 이 조회 결과를 상태에 반영하지 않는다. 대조에만 쓴다.
+     *
+     * 반환에 없는 (룸타입, 날짜)는 **채널이 그 날짜를 모른다**는 뜻이다.
+     * 0 과 구분해야 한다 -- 0 은 "매진이라고 안다" 이고 부재는 "통보가 도달한
+     * 적이 없다" 이며, 후자가 이 리포트가 잡으려는 것이다.
+     */
+    fun currentInventory(roomTypeId: Long, from: java.time.LocalDate, to: java.time.LocalDate):
+        Map<java.time.LocalDate, Int>
 }
 
 /**
