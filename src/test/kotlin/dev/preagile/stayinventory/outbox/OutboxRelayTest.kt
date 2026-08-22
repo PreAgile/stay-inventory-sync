@@ -103,21 +103,23 @@ class OutboxRelayTest(
     }
 
     test("릴레이는 payload 만 보낸다 — 발행 시점에 재고를 다시 조회하지 않는다") {
-        // Given: 예약으로 통보가 하나 생긴 뒤, **발행 전에** 취소가 일어난다
+        // Given: 예약을 하나 넣고 **먼저 발행**한다
         val roomTypeId = fixture.seedGrid(march1, days = 2, physicalTotal = 10)
         val reservationId = reserve(roomTypeId)
         val firstEventId = pendingIds().first()
-        inventoryService.cancel(reservationId)
-
-        // When: 이제 발행한다. 현재 재고는 10 이 남은 상태다
         relay.drain()
 
-        // Then: 첫 통보는 여전히 remaining 9 를 말해야 한다.
+        // When: 그 뒤에 취소가 일어나고 다시 발행한다
+        inventoryService.cancel(reservationId)
+        relay.drain()
+
+        // Then: 첫 통보의 본문은 여전히 remaining 9 다.
         //
-        // 발행 시점에 재고를 다시 읽으면 두 통보가 모두 10 으로 나가고, 채널은
-        // "9였던 적이 없다" 고 보게 된다. 그것은 at-least-once 가 아니라
+        // 발행 시점에 재고를 다시 읽는 구현이면 두 통보가 모두 10 으로 나가고,
+        // 채널은 "9였던 적이 없다" 고 보게 된다. 그것은 at-least-once 가 아니라
         // 순서 없는 최신값 전송이고, 수신 측 멱등으로 흡수되지 않는다
         adapter.payloadOf(firstEventId)!! shouldContain "\"remaining\": 9"
+        adapter.applied shouldBe 2
     }
 
     // ── T4 ────────────────────────────────────────────────────────────────

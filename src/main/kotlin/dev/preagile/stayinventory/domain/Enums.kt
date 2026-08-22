@@ -11,7 +11,13 @@ package dev.preagile.stayinventory.domain
 /** 룸타입이 즉시확정인가 승인형인가. `HELD` 다음 상태를 가른다 (ADR-0010 결정 7). */
 enum class BookingMode { INSTANT, ON_REQUEST }
 
-enum class OutboxStatus { PENDING, PUBLISHED, DEAD }
+/**
+ * `SUPERSEDED` 는 실패가 아니다 -- **같은 키의 더 새로운 통보가 이미 나갔다**는 뜻이다.
+ *
+ * `PUBLISHED` 로 적지 않는다. 발행한 적이 없는데 발행했다고 적으면 "왜 채널에
+ * 안 갔는가" 를 되짚을 수 없고, 지표에서 발행량이 부풀려진다 (ADR-0012).
+ */
+enum class OutboxStatus { PENDING, PUBLISHED, DEAD, SUPERSEDED }
 
 /** 인바운드 알림이 무엇에 관한 것인가. 재고 축과 정책 축을 가른다 (ADR-0009). */
 enum class InboundKind { BOOKING, POLICY }

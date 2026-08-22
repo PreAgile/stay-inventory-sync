@@ -12,6 +12,7 @@ import jakarta.persistence.Table
 import org.hibernate.annotations.JdbcTypeCode
 import org.hibernate.type.SqlTypes
 import java.time.Instant
+import java.time.LocalDate
 
 /**
  * 나갈 통보 (ADR-0003).
@@ -54,6 +55,27 @@ class OutboxEvent(
 
     @Column(name = "published_at")
     var publishedAt: Instant? = null,
+
+    /**
+     * 재고 통보의 키 절반. `aggregateId` 를 재사용하지 않는 이유는 그것이
+     * 다형 참조이고 `BIGINT` 하나라 (룸타입, 날짜) 복합 키를 담을 수 없기 때문이다.
+     */
+    @Column(name = "room_type_id")
+    val roomTypeId: Long? = null,
+
+    @Column(name = "stay_date")
+    val stayDate: LocalDate? = null,
+
+    /**
+     * **같은 키 안에서** 단조 증가한다. 전역 순서가 아니다.
+     *
+     * 단조성을 보장하는 것은 시퀀스가 아니라 **`daily_inventory` 행 락**이다.
+     * 같은 키의 통보를 만드는 모든 트랜잭션이 그 행을 잠그고 지나가므로,
+     * `MAX(version) + 1` 을 읽고 쓰는 사이에 다른 트랜잭션이 끼어들 수 없다.
+     * 재고 카운터를 직렬화하는 락이 버전도 함께 직렬화한다 (ADR-0012).
+     */
+    @Column(name = "version")
+    val version: Long? = null,
 
     @Id
     @GeneratedValue(strategy = GenerationType.IDENTITY)
