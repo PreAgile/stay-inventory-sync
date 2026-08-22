@@ -193,13 +193,37 @@ CREATE TABLE inbound_message (
     processed_at    TIMESTAMPTZ,
     attempt_count   INT          NOT NULL DEFAULT 0,
 
-    UNIQUE (channel, external_id, sequence_key)
+    UNIQUE NULLS NOT DISTINCT (channel, external_id, sequence_key)
 );
 ```
 
-`UNIQUE (channel, external_id, sequence_key)` 가 이 테이블의 핵심 한 줄이다.
+`UNIQUE NULLS NOT DISTINCT (channel, external_id, sequence_key)` 가 이 테이블의 핵심 한 줄이다.
 `reservation` 의 `UNIQUE(channel, channel_reservation_id)` 가 예약의 중복 생성을 막는 것처럼,
 이 제약이 **같은 알림의 재처리**를 DB 레벨에서 막는다.
+
+#### `NULLS NOT DISTINCT` 가 없으면 제약이 아무것도 막지 않는다
+
+`sequence_key` 는 **NULL 일 수 있다** — 순서키를 주지 않는 채널이 있다. 그리고
+PostgreSQL 의 기본 동작에서 **NULL 은 NULL 과 같지 않다.** 그냥 `UNIQUE` 로 쓰면
+`sequence_key IS NULL` 인 행은 서로 중복으로 판정되지 않는다.
+
+```
+UNIQUE (channel, external_id, sequence_key)      -- 기본: NULLS DISTINCT
+
+('YANOLJA', 'BK-1', NULL)   INSERT  ->  성공
+('YANOLJA', 'BK-1', NULL)   INSERT  ->  성공   <- 같은 알림이 두 번 들어왔다
+```
+
+**순서키를 주지 않는 채널에서만 멱등이 뚫린다.** 순서키를 주는 채널로 테스트하면
+통과하므로 조용하다. 그리고 이 테이블의 존재 이유가 그 하나이므로,
+제약이 이렇게 새면 Inbox 를 둔 의미가 없다.
+
+`NULLS NOT DISTINCT` 는 **PostgreSQL 15 이상**이다. 이 저장소의 스택은 16 이므로 쓸 수 있고,
+이 문장이 곧 **PostgreSQL 15 미만으로 내려갈 수 없다는 제약**이 된다.
+
+> **`sequence_key NOT NULL DEFAULT ''` 로 바꾸는 안을 기각했다.** 동작은 같지만
+> "채널이 순서키를 주지 않았다"와 "빈 문자열을 주었다"를 구분할 수 없게 된다.
+> 순서 역전 판정(`#9` B4)이 그 구분을 쓴다.
 
 `payload` 를 해석하지 않고 그대로 넣는 이유는, 수신을 최대한 빨리 끝내야 하기 때문이다.
 해석에서 실패해도 받은 사실은 남아야 한다.

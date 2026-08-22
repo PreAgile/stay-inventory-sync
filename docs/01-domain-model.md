@@ -8,7 +8,10 @@ erDiagram
     ROOM_TYPE ||--o{ DAILY_INVENTORY : "날짜별 재고를 갖는다"
     ROOM_TYPE ||--o{ RESERVATION : "예약 대상이 된다"
     RESERVATION ||--o{ INVENTORY_HOLD : "확정 전 재고를 선점한다"
-    RESERVATION ||--o{ OUTBOX_EVENT : "이벤트를 발생시킨다"
+    RESERVATION ||..o{ OUTBOX_EVENT : "이벤트를 발생시킨다. 다형 참조라 FK 아님"
+    ROOM_TYPE ||--o{ CHANNEL_POLICY : "채널별 노출 규칙을 갖는다"
+    DAILY_INVENTORY ||--o{ INVENTORY_HOLD : "그 날짜 재고를 선점당한다"
+    DAILY_INVENTORY ||..o{ CHANNEL_POLICY : "같은 (룸타입, 날짜) 격자. FK 아님"
 
     PROPERTY {
         bigint   id PK
@@ -22,6 +25,7 @@ erDiagram
         bigint   property_id FK
         varchar  name
         int      capacity
+        varchar  booking_mode "INSTANT|ON_REQUEST (ADR-0010)"
         timestamptz created_at
     }
 
@@ -70,11 +74,105 @@ erDiagram
         timestamptz created_at
         timestamptz published_at
     }
+
+    CHANNEL_POLICY {
+        bigint   room_type_id PK "FK -> room_type.id"
+        date     stay_date    PK
+        varchar  channel      PK
+        varchar  kind         PK "CLOSED|CAP|OFFSET"
+        int      value
+        varchar  source       "OURS|CHANNEL. 누가 정했나 (ADR-0009)"
+        timestamptz updated_at
+    }
+
+    INBOUND_MESSAGE {
+        bigint   id PK
+        varchar  channel      UK "external_id·sequence_key 와 복합 유니크"
+        varchar  kind         "BOOKING|POLICY"
+        varchar  external_id  UK "채널이 부여한 식별자"
+        varchar  sequence_key UK "순서 판정용. NULL 가능 -> NULLS NOT DISTINCT 필수"
+        jsonb    payload      "받은 그대로. 해석하지 않는다"
+        varchar  status       "PENDING|PROCESSED|IGNORED|DEAD"
+        int      attempt_count
+        timestamptz received_at
+        timestamptz processed_at
+    }
 ```
 
-### 왜 5개인가
+### ERD 를 읽는 두 가지 주의
 
-의도적으로 최소화했다. 실제 PMS라면 `rate_plan`, `room`(개별 호실), `guest`, `folio`,
+**선 모양이 의미를 갖는다.** 실선(`--`)은 **DB FK 로 강제되는 관계**이고,
+점선(`..`)은 **키를 공유하거나 논리적으로만 이어진 관계**다. 점선을 FK 로 읽고
+마이그레이션에 제약을 넣으면 없어야 할 제약이 생긴다.
+
+**`INBOUND_MESSAGE` 에는 선이 하나도 없다.** 그리다 만 것이 아니라 **의도한 것**이다.
+이유는 셋이고, 세 번째가 결정적이다.
+
+| | 이유 |
+|---|---|
+| ① | **참조 대상이 다른 테이블이다.** `kind` 가 `BOOKING` 이면 `reservation` 을, `POLICY` 면 `channel_policy` 를 가리킨다 |
+| ② | **개수도 다르다.** `BOOKING` 은 예약 0~1건, `POLICY` 는 정책 행 0~N건이다. 컬럼 하나는 집합을 가리킬 수 없다 |
+| ③ | **끝까지 대상이 없는 행이 정상이다.** 에코(`IGNORED`) 와 해석 실패(`DEAD`) 는 영구히 비어 있다. 예외가 아니라 정상 경로다 |
+| ④ | **원본과 해석 결과를 한 행에 섞지 않는다.** `payload` 는 "받은 그대로" 이고, 무엇을 가리키는지는 해석의 **산출물**이다 |
+
+**`POLICY` 알림의 대상 키를 정확히 적으면 이렇다.**
+
+```text
+채널 알림 1건  ->  (room_type_id, stay_date, channel) 격자 위의
+                   kind 별 정책 행 0~N 개
+
+  예) "6/15 야놀자 닫고 상한 2" 한 건이
+        (…, '2026-06-15', 'YANOLJA', 'CLOSED') 와
+        (…, '2026-06-15', 'YANOLJA', 'CAP')     두 행을 만든다
+```
+
+`channel_policy` 의 PK 는 `(room_type_id, stay_date, channel, kind)` 4개이고
+**알림 하나가 `kind` 여러 개를 실어 올 수 있다.** `kind` 를 빼고 세 개로만 적으면
+"한 행인가 여러 행인가"를 알 수 없다. 판정과 흡수는 **`kind` 단위 upsert** 로 한다
+(`docs/07-reconciliation.md` · ADR-0009).
+
+> **nullable FK 로 저장 자체는 가능하다.** `reservation_id` 를 NULL 로 넣고 처리 단계에서
+> 채우면 되고, FK 는 값이 있을 때만 검사한다. **"FK 를 걸면 저장할 수 없다"는 근거가
+> 아니다** — 이 문서의 이전 판이 그렇게 적었고, 그것은 틀렸다.
+>
+> 안 두는 이유는 위 넷이다. 특히 ①·②가 있는 한 nullable FK 로도 **예약 축의 단일 행만**
+> 표현된다. `POLICY` 알림은 그 컬럼이 영구히 NULL 이고, 그러면 "NULL 인 이유"가 두 가지로
+> 섞인다 — 아직 안 풀렸는가, 애초에 예약이 아닌가. 상태를 그 컬럼으로 읽을 수 없게 된다.
+> 정책 쪽을 표현하려면 연결 테이블이 하나 더 필요한데, **그 테이블이 하는 일은 이미
+> `channel_policy` 의 PK 가 한다.**
+
+연결은 처리 단계에서 값으로 찾는다 (`docs/07-reconciliation.md`).
+
+**선이 있는 것과 FK 로 강제되는 것이 다르다.**
+
+| 선 | DB 가 강제하는가 |
+|---|---|
+| `PROPERTY -> ROOM_TYPE` · `ROOM_TYPE -> DAILY_INVENTORY` · `ROOM_TYPE -> RESERVATION` | 예 — FK |
+| `RESERVATION -> INVENTORY_HOLD` · `DAILY_INVENTORY -> INVENTORY_HOLD` | 예 — FK 둘 (`#2`) |
+| `RESERVATION -> OUTBOX_EVENT` | **아니오** — `aggregate_id` 는 타입이 섞이는 다형 참조다 |
+| `ROOM_TYPE -> CHANNEL_POLICY` | 예 — FK (`room_type_id -> room_type.id`) |
+| `DAILY_INVENTORY -> CHANNEL_POLICY` | **아니오** — `(room_type_id, stay_date)` 격자를 공유할 뿐이다 |
+
+`DAILY_INVENTORY -> CHANNEL_POLICY` 에 FK 를 걸면 **재고 행이 아직 없는 미래 날짜에
+노출 상한을 미리 설정하는 것이 막힌다.** 캡형 운영에서 실제로 필요한 동작이므로
+이 관계는 격자 공유로만 둔다 (ADR-0009 · `#36`).
+
+**엔티티 사이에 선이 있어도 JPA 연관 매핑은 두지 않는다.** 이 그림은 데이터의 모양이고,
+코드에서 참조는 ID 값으로만 한다 (ADR-0008 · 절대 규칙 12).
+
+### 왜 8개인가
+
+의도적으로 최소화했다. 초안은 5개였고 설계 결정 둘이 셋을 더했다 —
+`inventory_hold`(ADR-0010) · `inbound_message` · `channel_policy`(ADR-0009).
+셋 다 **없으면 조용히 깨지는 상태가 생겨서** 넣은 것이다.
+
+| 추가 | 없으면 |
+|---|---|
+| `inventory_hold` | 확정 전 재고를 잡아둘 곳이 없어 결제 중에 방이 팔린다 |
+| `inbound_message` | "알림은 왔는데 처리는 안 된" 상태가 남지 않는다 |
+| `channel_policy` | 채널이 바꾼 것이 재고인지 정책인지 구분할 장부가 없다 |
+
+실제 PMS라면 `rate_plan`, `room`(개별 호실), `guest`, `folio`,
 `housekeeping_task`가 더 있어야 하지만, 이번 문제(재고 정합성)를 증명하는 데
 기여하지 않는 테이블은 전부 제외했다.
 
@@ -88,8 +186,11 @@ erDiagram
 | 제약 | 위치 | 막는 것 |
 |---|---|---|
 | `PK(room_type_id, stay_date)` | daily_inventory | 동일 날짜 재고 행의 중복 생성 |
-| `CHECK (sold >= 0 AND sold <= total)` | daily_inventory | 과다 차감 / 음수 재고 |
+| `CHECK (sold >= 0 AND sold <= physical_total + overbooking_limit)` | daily_inventory | 과다 차감 / 음수 재고 |
+| `CHECK (room_count > 0)` | reservation · inventory_hold | 음수 수량이 `INV-4` 를 통과하며 `INV-1` 을 깨는 것 |
 | `UNIQUE(channel, channel_reservation_id)` | reservation | **중복 웹훅의 1차 방어선** |
+| `UNIQUE NULLS NOT DISTINCT(channel, external_id, sequence_key)` | inbound_message | 같은 알림의 재처리 |
+| `PK(room_type_id, stay_date, channel, kind)` | channel_policy | 같은 채널·날짜에 규칙 중복 |
 | `INDEX(status, next_attempt_at)` | outbox_event | 릴레이 폴링 성능 |
 
 `UNIQUE(channel, channel_reservation_id)`가 이 스키마에서 가장 중요한 한 줄이다.
@@ -141,12 +242,16 @@ stateDiagram-v2
 **불변식(invariant)은 "언제 어느 순간에도 참이어야 하는 등식"이다.**
 테스트가 끝날 때마다 이 등식들을 검사해서, 하나라도 거짓이면 실패로 본다.
 
-재고 테이블 `daily_inventory` 는 (방 종류 × 날짜) 조합마다 숫자 두 개를 들고 있다.
+재고 판정은 (방 종류 × 날짜) 조합마다 **양 두 개**를 본다.
 
-| 컬럼 | 뜻 | 핵심 |
+| 양 | 뜻 | 핵심 |
 |---|---|---|
-| `total` | 그 날짜에 팔 수 있는 방 개수 | 거의 안 바뀐다 |
-| `sold` | 그중 몇 개가 팔렸는가 | 예약·취소마다 바뀐다 |
+| `total` | 그 날짜에 팔 수 있는 방 개수 | 거의 안 바뀐다. **컬럼이 아니라 계산값이다** |
+| `sold` | 그중 몇 개가 팔렸는가 | 실제 컬럼. 예약·취소마다 바뀐다 |
+
+> **`total` 이라는 컬럼은 없다.** `physical_total + overbooking_limit` 로 계산한다.
+> 둘을 따로 두는 이유는 아래 「`total` 은 컬럼이 아니라 계산값이다」에 있다.
+> **불변식 서술에는 `total` 을 쓰고, `CHECK` 제약과 마이그레이션에는 실제 컬럼 두 개를 쓴다.**
 
 `sold` 는 **카운터**다. 예약이 들어오면 1 올리고 취소되면 1 내린다.
 그런데 카운터는 틀릴 수 있다 — 동시 요청, 중복 수신, 재시도 어디서든 어긋난다.
