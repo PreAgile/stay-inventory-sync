@@ -1,0 +1,3 @@
+빈 디렉터리는 jar 에 담기지 않는다. 이 파일이 있어야 Flyway 가
+classpath:db/migration 을 해석하고 "이력 없음" 으로 정상 통과한다.
+V1__init.sql 이 들어오면 이 파일은 지운다.

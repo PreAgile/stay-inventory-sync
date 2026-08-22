@@ -227,10 +227,30 @@ dirty checking 은 **정적 참조 없이 UPDATE 를 만든다.**
 test("동시 요청 하에서 오버부킹은 발생하지 않는다") { ... }
 ```
 
-- Kotest `FunSpec`. JUnit으로 전환하지 않는다
+- **기본은 Kotest `FunSpec`.** 다만 절대 규칙이 아니다 — JUnit 스타일이 명백히 쉬운
+  자리(`@ParameterizedTest`, 일부 Spring 테스트 슬라이스, JUnit 전용 확장)에서는 쓴다.
+  **조건이 하나 붙는다: 아래 불변식 훅이 두 엔진 모두에 걸려 있어야 한다**
 - Given-When-Then 주석 구조. AAA 아님
 - 동시성 테스트는 `CountDownLatch` 등으로 **실제 동시 시작을 강제**한다
-- 모든 테스트 종료 시 불변식을 검증한다
+- **모든 테스트 종료 시 불변식을 검증한다** — 이것이 위 항목의 유일한 제약 조건이다
+
+#### 왜 스타일 혼용에 조건이 붙는가
+
+불변식 훅을 Kotest 확장으로만 만들면 **JUnit 스타일 테스트는 검사를 조용히 건너뛴다.**
+통과했다는 신호는 그대로 나오고 검사만 사라진다 — 이 저장소가 막겠다고 하는 실패 형태다.
+
+그래서 훅을 프레임워크 하나에 묶지 않는다.
+
+| 엔진 | 등록 방법 |
+|---|---|
+| Kotest | `AfterTestListener` 를 `ProjectConfig` 에 등록 |
+| JUnit Jupiter | `AfterTestExecutionCallback` + **자동 등록**(`junit-platform.properties` 의 `junit.jupiter.extensions.autodetection.enabled=true` + `ServiceLoader`) |
+
+**JUnit 쪽은 애노테이션을 붙이지 않아도 걸리게 한다.** 붙이는 것을 잊으면 검사가
+빠지므로, 잊을 수 있는 형태로 두지 않는다.
+
+그리고 ArchUnit 으로 확인한다 — **의존성 배제로는 막을 수 없다**(`kotest-runner-junit5` 가
+`junit-bom` 을 통해 Jupiter API 를 끌어온다). 검사로 막는다.
 
 ```
 INV-1  0 <= sold <= total
