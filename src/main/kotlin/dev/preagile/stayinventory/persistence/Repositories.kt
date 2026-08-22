@@ -81,12 +81,60 @@ interface ReservationRepository : JpaRepository<Reservation, Long> {
         @Param("to") to: ReservationStatus,
         @Param("now") now: Instant,
     ): Int
+
+    /**
+     * 채널이 준 예약 번호로 찾는다. `UNIQUE(channel, channel_reservation_id)` 가
+     * 있으므로 결과는 0 또는 1 이다.
+     */
+    fun findByChannelAndChannelReservationId(
+        channel: String,
+        channelReservationId: String,
+    ): Reservation?
 }
 
 interface InventoryHoldRepository : JpaRepository<InventoryHold, Long>
 
 interface OutboxEventRepository : JpaRepository<OutboxEvent, Long>
 
-interface InboundMessageRepository : JpaRepository<InboundMessage, Long>
+interface InboundMessageRepository : JpaRepository<InboundMessage, Long> {
+
+    /**
+     * 이미 받은 알림인지 본다. **`IS NOT DISTINCT FROM` 을 쓴다.**
+     *
+     * 파생 쿼리(`findByChannelAndExternalIdAndSequenceKey`)로 쓰면 `sequenceKey` 가
+     * null 일 때 `= NULL` 이 되어 **아무 행에도 맞지 않는다.** 순서키를 주지 않는
+     * 채널에서만 조기 반환이 조용히 죽고, 순서키를 주는 채널로 테스트하면 통과한다 --
+     * 스키마의 `NULLS NOT DISTINCT` 가 막으려던 것과 **정확히 같은 함정**이다.
+     *
+     * 애플리케이션 판정과 DB 제약이 같은 것을 같다고 봐야 두 방어선이 겹친다.
+     * 판정이 어긋나면 조기 반환은 통과시키고 DB 만 막아, 정상 경로가 늘 예외로 끝난다.
+     */
+    @Query(
+        value = "SELECT count(*) > 0 FROM inbound_message " +
+            "WHERE channel = :channel AND external_id = :externalId " +
+            "AND sequence_key IS NOT DISTINCT FROM :sequenceKey",
+        nativeQuery = true,
+    )
+    fun alreadyReceived(
+        @Param("channel") channel: String,
+        @Param("externalId") externalId: String,
+        @Param("sequenceKey") sequenceKey: String?,
+    ): Boolean
+
+    /**
+     * 처리 대기 알림을 꺼낸다.
+     *
+     * `(external_id, sequence_key)` 순으로 준다. 같은 예약에 대한 알림은 순서키
+     * 순서로 처리해야 하고(`07-reconciliation.md`), 서로 다른 예약끼리는 순서를
+     * 신경 쓰지 않는다. `NULLS FIRST` 는 순서키 없는 알림을 먼저 보낸다 --
+     * 그 채널은 어차피 순서를 복원할 수 없으므로 도착 순서가 최선이다.
+     */
+    @Query(
+        value = "SELECT * FROM inbound_message WHERE status = 'PENDING' " +
+            "ORDER BY external_id, sequence_key NULLS FIRST, id LIMIT :limit",
+        nativeQuery = true,
+    )
+    fun findPending(@Param("limit") limit: Int): List<InboundMessage>
+}
 
 interface ChannelPolicyRepository : JpaRepository<ChannelPolicy, ChannelPolicyId>
