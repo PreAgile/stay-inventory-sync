@@ -173,6 +173,18 @@ class ArchitectureTest : FunSpec({
             .check(production)
     }
 
+    test("정책 축은 재고 축을 만지지 않는다 — 두 축이 섞이면 원본이 둘이 된다") {
+        // Given: channel_policy 를 다루는 패키지
+        // Then: ADR-0009 가 세 축을 나누고 축마다 원본을 하나로 정했다.
+        // 정책 코드가 재고 서비스를 부르기 시작하면 "캡을 걸었더니 재고가 줄었다"
+        // 같은 경로가 생기고, 그 순간 캡형이 아니라 배정이 된다 (ADR-0001 기각안)
+        noClasses()
+            .that().resideInAPackage("..stayinventory.policy..")
+            .should().dependOnClassesThat().resideInAPackage("..stayinventory.inventory..")
+            .because("캡은 노출 상한이지 판매 상한이 아니다. 재고 모델을 바꾸면 배정이다")
+            .check(production)
+    }
+
     // ── 아직 오지 않은 규칙 ────────────────────────────────────────────────
     test("대상이 생기면 규칙도 함께 와야 한다 — 미착수 패키지 목록") {
         // Given: docs/03-testing-strategy.md 가 규칙을 약속했지만 대상이 없는 패키지

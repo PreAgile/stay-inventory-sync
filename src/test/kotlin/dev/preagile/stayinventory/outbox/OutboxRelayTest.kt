@@ -254,6 +254,7 @@ class OutboxRelayTest(
         val throwing = object : dev.preagile.stayinventory.channel.ChannelAdapter {
             override val channel = "THROWING"
             override fun push(idempotencyKey: Long, payload: String) = error("연결 끊김")
+            override fun pushPolicy(idempotencyKey: Long, payload: String) = error("연결 끊김")
             override fun currentInventory(
                 roomTypeId: Long,
                 from: LocalDate,

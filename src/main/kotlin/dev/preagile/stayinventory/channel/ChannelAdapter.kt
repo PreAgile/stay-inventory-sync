@@ -20,6 +20,15 @@ interface ChannelAdapter {
     fun push(idempotencyKey: Long, payload: String): ChannelSyncResult
 
     /**
+     * 노출 규칙을 보낸다. 재고와 **별개 경로**다.
+     *
+     * 채널 API 에서도 둘은 다른 자원이다 -- 재고는 `availability`, 규칙은
+     * `max_availability` 같은 제한 필드다. 한 메서드로 합치면 payload 안의
+     * 필드를 보고 분기해야 하고, **그 분기는 어댑터가 payload 의 구조를 안다**는 뜻이다.
+     */
+    fun pushPolicy(idempotencyKey: Long, payload: String): ChannelSyncResult
+
+    /**
      * 채널이 **지금 들고 있는** 재고를 읽어 온다. 대사(#6)가 쓴다.
      *
      * `push` 와 방향이 반대이고 성질도 반대다 -- `push` 는 "우리가 아는 값을
