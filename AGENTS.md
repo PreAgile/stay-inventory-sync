@@ -299,8 +299,10 @@ Conventional Commits: `feat:`, `fix:`, `docs:`, `test:`, `refactor:`, `chore:`
 
 ### AI 리뷰 대응
 
-이 저장소는 CodeRabbit과 Gemini Code Assist를 PR 리뷰어로 쓴다.
-설정: `.coderabbit.yaml`, `.gemini/config.yaml`, `.gemini/styleguide.md`
+이 저장소는 **CodeRabbit 단독**으로 PR 리뷰를 받는다. 설정: `.coderabbit.yaml`
+
+Gemini Code Assist 를 함께 쓰다가 무료 제공 종료로 중단했다.
+판단 경위와 되돌릴 조건은 `docs/05-ai-collaboration.md` 에 있다.
 
 봇 지적을 **조용히 반영하지 않는다.** 답글로 판단을 남긴다.
 
