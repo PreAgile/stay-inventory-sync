@@ -9,6 +9,8 @@ erDiagram
     ROOM_TYPE ||--o{ RESERVATION : "예약 대상이 된다"
     RESERVATION ||--o{ INVENTORY_HOLD : "확정 전 재고를 선점한다"
     RESERVATION ||--o{ OUTBOX_EVENT : "이벤트를 발생시킨다"
+    DAILY_INVENTORY ||--o{ INVENTORY_HOLD : "그 날짜 재고를 선점당한다"
+    DAILY_INVENTORY ||--o{ CHANNEL_POLICY : "채널별 노출 규칙을 갖는다"
 
     PROPERTY {
         bigint   id PK
@@ -70,7 +72,50 @@ erDiagram
         timestamptz created_at
         timestamptz published_at
     }
+
+    CHANNEL_POLICY {
+        bigint   room_type_id PK "FK"
+        date     stay_date    PK
+        varchar  channel      PK
+        varchar  kind         PK "CLOSED|CAP|OFFSET"
+        int      value
+        varchar  source       "OURS|CHANNEL. 누가 정했나 (ADR-0009)"
+        timestamptz updated_at
+    }
+
+    INBOUND_MESSAGE {
+        bigint   id PK
+        varchar  channel      UK "external_id·sequence_key 와 복합 유니크"
+        varchar  kind         "BOOKING|POLICY"
+        varchar  external_id  UK "채널이 부여한 식별자"
+        varchar  sequence_key UK "순서 판정용. 없을 수 있다"
+        jsonb    payload      "받은 그대로. 해석하지 않는다"
+        varchar  status       "PENDING|PROCESSED|IGNORED|DEAD"
+        int      attempt_count
+        timestamptz received_at
+        timestamptz processed_at
+    }
 ```
+
+### ERD 를 읽는 두 가지 주의
+
+**`INBOUND_MESSAGE` 에는 선이 하나도 없다.** 그리다 만 것이 아니라 **의도한 것**이다.
+Inbox 의 임무는 "받았다는 사실"을 최대한 빨리 남기는 것이고, 그 시점에는 이 알림이
+어느 예약을 가리키는지 아직 모른다 — `payload` 를 해석해야 알 수 있고, 해석은 실패할 수
+있다. FK 를 걸면 **해석에 실패한 알림을 저장할 수 없게 되고**, 그러면 받은 사실 자체가
+사라진다. 연결은 처리 단계에서 값으로 찾는다 (`docs/07-reconciliation.md`).
+
+**선이 있는 것과 FK 로 강제되는 것이 다르다.**
+
+| 선 | DB 가 강제하는가 |
+|---|---|
+| `PROPERTY -> ROOM_TYPE` · `ROOM_TYPE -> DAILY_INVENTORY` · `ROOM_TYPE -> RESERVATION` | 예 — FK |
+| `RESERVATION -> INVENTORY_HOLD` · `DAILY_INVENTORY -> INVENTORY_HOLD` | 예 — FK 둘 (`#2`) |
+| `RESERVATION -> OUTBOX_EVENT` | **아니오** — `aggregate_id` 는 타입이 섞이는 다형 참조다 |
+| `DAILY_INVENTORY -> CHANNEL_POLICY` | **아니오** — 키를 공유할 뿐이다. 재고 행이 없는 날짜에도 정책은 설 수 있다 |
+
+**엔티티 사이에 선이 있어도 JPA 연관 매핑은 두지 않는다.** 이 그림은 데이터의 모양이고,
+코드에서 참조는 ID 값으로만 한다 (ADR-0008 · 절대 규칙 12).
 
 ### 왜 5개인가
 
