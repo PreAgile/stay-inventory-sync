@@ -6,4 +6,3 @@ build/
 out/
 .DS_Store
 .env
-.probe-created
