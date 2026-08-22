@@ -60,6 +60,7 @@ erDiagram
         int      room_count       "reservation 과 같은 값"
         timestamptz expires_at    "만료 판정"
         timestamptz released_at   "전환·해제 판정. NULL 이면 살아 있다"
+        timestamptz created_at
     }
 
     OUTBOX_EVENT {

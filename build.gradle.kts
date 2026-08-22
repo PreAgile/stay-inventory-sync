@@ -70,6 +70,13 @@ dependencies {
 tasks.withType<Test>().configureEach {
     useJUnitPlatform()
 
+    // SchemaMatchesErdTest 는 이 두 파일을 읽어 대조한다. 태스크 입력으로
+    // 선언하지 않으면 문서만 고친 경우 Gradle 이 UP-TO-DATE 로 건너뛰고,
+    // 드리프트를 만들어도 초록불이 나온다 — 가드가 있으나 마나가 된다.
+    inputs.file("docs/01-domain-model.md").withPathSensitivity(PathSensitivity.RELATIVE)
+    inputs.file("src/main/resources/db/migration/V1__init.sql")
+        .withPathSensitivity(PathSensitivity.RELATIVE)
+
     // 컨테이너를 띄우는 테스트가 섞이므로 포크를 늘리지 않는다.
     // 병렬로 여러 PostgreSQL 을 띄우면 CI 러너에서 메모리로 죽는다.
     maxParallelForks = 1

@@ -35,15 +35,17 @@ class ApplicationContextTest(
         }
     }
 
-    test("Flyway 가 이력 테이블을 만든다 — 마이그레이션이 없어도 배선은 살아 있다") {
+    test("Flyway 가 V1 을 적용하고 이력에 성공으로 남긴다") {
         dataSource.connection.use { conn ->
             conn.createStatement().use { st ->
                 st.executeQuery(
-                    "SELECT count(*) FROM information_schema.tables " +
-                        "WHERE table_name = 'flyway_schema_history'",
+                    "SELECT version, success FROM flyway_schema_history ORDER BY installed_rank",
                 ).use { rs ->
                     rs.next()
-                    rs.getInt(1) shouldBe 1
+                    rs.getString("version") shouldBe "1"
+                    // success = false 인 이력이 남아도 컨텍스트는 뜬다.
+                    // 버전만 확인하면 실패한 마이그레이션을 통과로 읽는다.
+                    rs.getBoolean("success") shouldBe true
                 }
             }
         }
