@@ -78,7 +78,7 @@ class OutboxRelay(
                 // 이 배치에 더 새로운 것이 있거나, 이미 더 새로운 것이 나갔다면
                 // 이 이벤트는 보낼 이유가 없다.
                 val newerExists = newestInBatch.getValue(key) > version ||
-                    (highestPublishedVersion(key.first, key.second) ?: 0L) > version
+                    (highestPublishedVersion(key) ?: 0L) > version
                 if (newerExists) {
                     markSuperseded(event.id)
                     report = report.copy(superseded = report.superseded + 1)
@@ -87,8 +87,16 @@ class OutboxRelay(
             }
 
             // 락 밖이다. 여기서 네트워크를 기다려도 재고 행은 아무도 붙잡고 있지 않다.
-            val result = runCatching { adapter.push(event.id, event.payload) }
-                .getOrElse { ChannelSyncResult.Retryable("어댑터 예외: ${it.message}") }
+            //
+            // 재고와 규칙은 채널 API 에서도 다른 자원이므로 경로를 나눈다.
+            // payload 를 보고 분기하면 릴레이가 payload 의 구조를 알게 된다.
+            val result = runCatching {
+                if (event.aggregateType == AGGREGATE_CHANNEL_POLICY) {
+                    adapter.pushPolicy(event.id, event.payload)
+                } else {
+                    adapter.push(event.id, event.payload)
+                }
+            }.getOrElse { ChannelSyncResult.Retryable("어댑터 예외: ${it.message}") }
 
             report = when (result) {
                 is ChannelSyncResult.Success -> {
@@ -251,15 +259,17 @@ class OutboxRelay(
      * `PENDING` 은 아직 나가지 않았다 -- 그것까지 세면 아직 안 나간 새 이벤트
      * 때문에 지금 나가야 할 이벤트가 건너뛰어진다.
      */
-    fun highestPublishedVersion(roomTypeId: Long, stayDate: java.time.LocalDate): Long? =
+    fun highestPublishedVersion(key: OrderingKey): Long? =
         jdbc.queryForObject(
             """
             SELECT MAX(version) FROM outbox_event
-             WHERE room_type_id = ? AND stay_date = ? AND status = 'PUBLISHED'
+             WHERE aggregate_type = ? AND room_type_id = ? AND stay_date = ?
+               AND status = 'PUBLISHED'
             """.trimIndent(),
             Long::class.javaObjectType,
-            roomTypeId,
-            stayDate,
+            key.aggregateType,
+            key.roomTypeId,
+            key.stayDate,
         )
 
     /** 낡아서 보내지 않았다. 발행한 적 없으므로 `PUBLISHED` 로 적지 않는다. */
@@ -288,6 +298,15 @@ class OutboxRelay(
         Duration.ofMinutes(BACKOFF_MINUTES[minOf(retryCount, BACKOFF_MINUTES.lastIndex)])
 
     companion object {
+        /**
+         * 정책 통보의 `aggregate_type`.
+         *
+         * 문자열을 릴레이가 직접 아는 것이 마음에 들지는 않지만, 그 대안은
+         * 릴레이가 `policy` 패키지에 의존하는 것이다 -- 그러면 릴레이가
+         * 도메인 서비스에 닿고 ArchUnit 경계가 무너진다.
+         */
+        const val AGGREGATE_CHANNEL_POLICY = "CHANNEL_POLICY"
+
         /** Channex 공개 문서의 실제 재시도 스케줄. 임의 설정이 아니다. */
         val BACKOFF_MINUTES = listOf(1L, 2L, 4L, 8L, 15L, 30L)
 
@@ -331,14 +350,27 @@ data class PendingOutboxEvent(
     val stayDate: java.time.LocalDate? = null,
     val version: Long? = null,
 ) {
-    /** 순서 판정이 가능한 이벤트인가. 셋 다 있거나 셋 다 없다 (DB CHECK). */
-    val orderingKey: Pair<Long, java.time.LocalDate>?
+    /**
+     * 순서 판정의 키. 셋 다 있거나 셋 다 없다 (DB CHECK).
+     *
+     * **`aggregateType` 이 키에 들어간다.** 재고 통보와 정책 통보는 같은
+     * (룸타입, 날짜) 격자를 쓰지만 서로를 낡게 만들면 안 된다 -- 캡을 바꿨다고
+     * 재고 통보가 건너뛰어지면 채널은 잔여를 영영 모른다.
+     */
+    val orderingKey: OrderingKey?
         get() = if (roomTypeId != null && stayDate != null && version != null) {
-            roomTypeId to stayDate
+            OrderingKey(aggregateType, roomTypeId, stayDate)
         } else {
             null
         }
 }
+
+/** 순서를 비교할 단위. 이 셋이 같은 이벤트끼리만 낡음을 따진다. */
+data class OrderingKey(
+    val aggregateType: String,
+    val roomTypeId: Long,
+    val stayDate: java.time.LocalDate,
+)
 
 data class RelayReport(
     val published: Int = 0,
