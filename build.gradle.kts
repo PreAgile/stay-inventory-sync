@@ -52,12 +52,19 @@ dependencies {
 
     // Testcontainers — H2 를 쓰지 않는 이유가 FOR UPDATE 의 의미 차이다.
     // 락 검증이 성립해야 하므로 실제 PostgreSQL 을 띄운다.
+    //
+    // org.testcontainers:junit-jupiter 는 넣지 않는다. 그 모듈이 주는 것은
+    // @Testcontainers / @Container 라는 **JUnit 확장**뿐이고, 테스트 규약이
+    // FunSpec 통일을 요구하므로 쓸 수 없다(AGENTS.md). 컨테이너는 평문 API 로
+    // 직접 띄우거나(PostgresCapabilityTest) Spring 빈으로 선언한다(PostgresTestContainer).
     testImplementation("org.springframework.boot:spring-boot-testcontainers")
-    testImplementation("org.testcontainers:junit-jupiter")
     testImplementation("org.testcontainers:postgresql")
 
     testImplementation("org.awaitility:awaitility")
-    testImplementation("com.tngtech.archunit:archunit-junit5:1.3.0")
+    // archunit-junit5 가 아니라 평문 archunit 이다. -junit5 변형이 주는 것은
+    // @AnalyzeClasses / @ArchTest 라는 JUnit 확장이고, 규칙은 FunSpec 안에서
+    // ArchUnit API 를 직접 호출해 검사한다(PR ③).
+    testImplementation("com.tngtech.archunit:archunit:1.3.0")
 }
 
 tasks.withType<Test>().configureEach {
