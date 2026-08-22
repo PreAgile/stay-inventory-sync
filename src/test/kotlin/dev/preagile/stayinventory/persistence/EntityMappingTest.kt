@@ -65,7 +65,7 @@ class EntityMappingTest(
 
     /** 재고 격자까지 깔아 둔다. 선점·정책이 그 위에 선다. */
     fun seedGrid(physicalTotal: Int = 10): Pair<Long, DailyInventory> {
-        val property = properties.save(Property(name = "어반스테이 성수"))
+        val property = properties.save(Property(name = "스테이 A"))
         val roomType = roomTypes.save(
             RoomType(
                 propertyId = property.id!!,
@@ -91,7 +91,7 @@ class EntityMappingTest(
                 checkOut = stayDate.plusDays(3),
                 status = ReservationStatus.HELD,
                 roomCount = roomCount,
-                channel = "AIRBNB",
+                channel = "CHANNEL_A",
                 channelReservationId = "HMABC123",
                 guestName = "김손님",
             ),
@@ -245,7 +245,7 @@ class EntityMappingTest(
         // Given: 순서키를 주지 않는 채널
         val saved = inbound.save(
             InboundMessage(
-                channel = "BOOKINGCOM",
+                channel = "CHANNEL_B",
                 kind = InboundKind.BOOKING,
                 externalId = "BDC-9001",
                 sequenceKey = null,
@@ -265,14 +265,14 @@ class EntityMappingTest(
         val (roomTypeId, _) = seedGrid()
         policies.save(
             ChannelPolicy(
-                id = ChannelPolicyId(roomTypeId, stayDate, "AIRBNB", ChannelPolicyKind.CAP),
+                id = ChannelPolicyId(roomTypeId, stayDate, "CHANNEL_A", ChannelPolicyKind.CAP),
                 value = 5,
                 source = ChannelPolicySource.OURS,
             ),
         )
         policies.save(
             ChannelPolicy(
-                id = ChannelPolicyId(roomTypeId, stayDate, "AIRBNB", ChannelPolicyKind.CLOSED),
+                id = ChannelPolicyId(roomTypeId, stayDate, "CHANNEL_A", ChannelPolicyKind.CLOSED),
                 value = null,
                 source = ChannelPolicySource.CHANNEL,
             ),
@@ -281,7 +281,7 @@ class EntityMappingTest(
         // Then: kind 가 키에 없으면 둘째가 첫째를 덮어써 상한이 사라진다
         policies.count() shouldBe 2
         val cap = policies
-            .findById(ChannelPolicyId(roomTypeId, stayDate, "AIRBNB", ChannelPolicyKind.CAP))
+            .findById(ChannelPolicyId(roomTypeId, stayDate, "CHANNEL_A", ChannelPolicyKind.CAP))
             .orElseThrow()
         cap.value shouldBe 5
         cap.source shouldBe ChannelPolicySource.OURS
@@ -297,7 +297,7 @@ class EntityMappingTest(
                 id = ChannelPolicyId(
                     roomTypeId,
                     LocalDate.of(2026, 6, 1),
-                    "AGODA",
+                    "CHANNEL_C",
                     ChannelPolicyKind.CAP,
                 ),
                 value = 3,
@@ -312,7 +312,7 @@ class EntityMappingTest(
     // ── 동일성 ────────────────────────────────────────────────────────────
     test("엔티티 해시는 영속 전후로 바뀌지 않는다 — data class 를 쓰지 않는 이유") {
         // Given: 아직 id 가 없는 비영속 엔티티
-        val transient = Property(name = "르컬렉티브 한남")
+        val transient = Property(name = "스테이 C")
         val before = transient.hashCode()
 
         // When: 저장되어 id 가 생긴다
@@ -326,7 +326,7 @@ class EntityMappingTest(
 
     test("id 가 같으면 같은 엔티티다 — 다른 필드가 달라도") {
         // Given: 같은 행을 두 번 읽는다
-        val saved = properties.save(Property(name = "어반스테이 홍대"))
+        val saved = properties.save(Property(name = "스테이 B"))
         val a = properties.findById(saved.id!!).orElseThrow()
         val b = Property(name = "이름이 달라도", id = saved.id)
 

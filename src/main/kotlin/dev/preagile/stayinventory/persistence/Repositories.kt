@@ -1,10 +1,13 @@
 package dev.preagile.stayinventory.persistence
 
+import dev.preagile.stayinventory.domain.ReservationStatus
 import jakarta.persistence.LockModeType
 import org.springframework.data.jpa.repository.JpaRepository
 import org.springframework.data.jpa.repository.Lock
+import org.springframework.data.jpa.repository.Modifying
 import org.springframework.data.jpa.repository.Query
 import org.springframework.data.repository.query.Param
+import java.time.Instant
 import java.time.LocalDate
 
 /**
@@ -48,7 +51,37 @@ interface DailyInventoryRepository : JpaRepository<DailyInventory, DailyInventor
     ): DailyInventory?
 }
 
-interface ReservationRepository : JpaRepository<Reservation, Long>
+interface ReservationRepository : JpaRepository<Reservation, Long> {
+
+    /**
+     * 조건부 상태 전이. **바뀐 행 수**를 준다.
+     *
+     * 이 한 문장이 셋을 동시에 준다 (`docs/01-domain-model.md` 재고 복원 알고리즘).
+     *
+     * | 얻는 것 | 이유 |
+     * |---|---|
+     * | 동시 취소 방어 | 두 번째 트랜잭션은 `rowcount` 0 -- 복원을 실행하지 않는다 |
+     * | 취소 웹훅 멱등 | 이미 취소된 건에 2xx. 채널 재시도를 유발하지 않는다 (절대 규칙 5) |
+     * | 락 순서 강제 | `rowcount` 를 봐야 다음 단계로 갈지 알 수 있으므로, 순서를 어기려면 코드를 뒤집어야 한다 (ADR-0011) |
+     *
+     * 세 번째가 특히 값을 한다. **규칙을 지키는 것이 아니라 어길 수 없는 형태다.**
+     *
+     * `SELECT FOR UPDATE` -> 검증 -> `UPDATE` 세 단계를 한 문장으로 접는다.
+     * 나눠 쓰면 두 트랜잭션이 모두 `CONFIRMED` 를 읽고 둘 다 복원한다 --
+     * 예약은 1건인데 `sold` 가 2 줄고, 그 자리에 새 예약이 들어오면 오버부킹이다.
+     */
+    @Modifying
+    @Query(
+        "update Reservation r set r.status = :to, r.updatedAt = :now " +
+            "where r.id = :id and r.status = :from",
+    )
+    fun transition(
+        @Param("id") id: Long,
+        @Param("from") from: ReservationStatus,
+        @Param("to") to: ReservationStatus,
+        @Param("now") now: Instant,
+    ): Int
+}
 
 interface InventoryHoldRepository : JpaRepository<InventoryHold, Long>
 

@@ -45,7 +45,7 @@ class InvariantDetectionTest(
 
     /** 룸타입 하나와 3/1 격자 하나를 깔고 룸타입 id 를 준다. */
     fun seed(conn: Connection, physicalTotal: Int = 10, sold: Int = 0): Long {
-        conn.exec("INSERT INTO property (name) VALUES ('어반스테이 성수')")
+        conn.exec("INSERT INTO property (name) VALUES ('스테이 A')")
         conn.exec(
             "INSERT INTO room_type (property_id, name, capacity) " +
                 "VALUES (1, '디럭스', 2)",
@@ -110,7 +110,7 @@ class InvariantDetectionTest(
                        (room_type_id, check_in, check_out, status, room_count,
                         channel, channel_reservation_id, guest_name)
                 VALUES (1, DATE '2026-03-01', DATE '2026-03-02', 'CONFIRMED', 2,
-                        'AIRBNB', 'HM-1', '김손님')
+                        'CHANNEL_A', 'HM-1', '김손님')
                 """.trimIndent(),
             )
 
@@ -131,7 +131,7 @@ class InvariantDetectionTest(
                        (room_type_id, check_in, check_out, status, room_count,
                         channel, channel_reservation_id, guest_name)
                 VALUES (1, DATE '2026-03-01', DATE '2026-03-03', 'CONFIRMED', 1,
-                        'AIRBNB', 'HM-2', '이손님')
+                        'CHANNEL_A', 'HM-2', '이손님')
                 """.trimIndent(),
             )
 
@@ -157,7 +157,7 @@ class InvariantDetectionTest(
                        (room_type_id, check_in, check_out, status, room_count,
                         channel, channel_reservation_id, guest_name)
                 VALUES (1, DATE '2026-03-05', DATE '2026-03-01', 'CANCELED', 1,
-                        'AIRBNB', 'HM-3', '박손님')
+                        'CHANNEL_A', 'HM-3', '박손님')
                 """.trimIndent(),
             )
 
@@ -185,9 +185,9 @@ class InvariantDetectionTest(
                        (room_type_id, check_in, check_out, status, room_count,
                         channel, channel_reservation_id, guest_name)
                 VALUES (1, DATE '2026-03-01', DATE '2026-03-02', 'CONFIRMED', 1,
-                        'AIRBNB', 'HM-4', '최손님'),
+                        'CHANNEL_A', 'HM-4', '최손님'),
                        (1, DATE '2026-03-01', DATE '2026-03-02', 'HELD', 2,
-                        'AIRBNB', 'HM-5', '정손님')
+                        'CHANNEL_A', 'HM-5', '정손님')
                 """.trimIndent(),
             )
 
@@ -217,11 +217,11 @@ class InvariantDetectionTest(
                        (room_type_id, check_in, check_out, status, room_count,
                         channel, channel_reservation_id, guest_name)
                 VALUES (1, DATE '2026-03-01', DATE '2026-03-02', 'CONFIRMED', 1,
-                        'AIRBNB', 'HM-6', '한손님'),
+                        'CHANNEL_A', 'HM-6', '한손님'),
                        (1, DATE '2026-03-01', DATE '2026-03-02', 'EXPIRED', 2,
-                        'AIRBNB', 'HM-7', '조손님'),
+                        'CHANNEL_A', 'HM-7', '조손님'),
                        (1, DATE '2026-03-01', DATE '2026-03-02', 'CONFIRMED', 2,
-                        'AIRBNB', 'HM-8', '윤손님')
+                        'CHANNEL_A', 'HM-8', '윤손님')
                 """.trimIndent(),
             )
             conn.exec(
@@ -251,7 +251,7 @@ class InvariantDetectionTest(
                        (room_type_id, check_in, check_out, status, room_count,
                         channel, channel_reservation_id, guest_name)
                 VALUES (1, DATE '2026-03-01', DATE '2026-03-02', 'CONFIRMED', 2,
-                        'AIRBNB', 'HM-9', '서손님')
+                        'CHANNEL_A', 'HM-9', '서손님')
                 """.trimIndent(),
             )
 
