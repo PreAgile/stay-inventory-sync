@@ -56,6 +56,12 @@ class OutboxRelayMultiInstanceTest(
 
         // 이 스펙은 호출 횟수만 본다. 대사는 InventoryDiffTest 의,
         // 규칙 발행은 ChannelCapTest 의 관심사다.
+        override fun pushSnapshot(
+            roomTypeId: Long,
+            stayDate: java.time.LocalDate,
+            remaining: Int,
+        ): ChannelSyncResult = ChannelSyncResult.Success()
+
         override fun pushPolicy(idempotencyKey: Long, payload: String): ChannelSyncResult =
             push(idempotencyKey, payload)
 
