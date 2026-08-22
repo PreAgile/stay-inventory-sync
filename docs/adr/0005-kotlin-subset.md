@@ -181,7 +181,7 @@ Spring의 `TransactionSynchronizationManager`는 `ThreadLocal`에 트랜잭션 �
 
 ## 결과
 
-- 코드 리뷰 도구에 사용 금지 기능 목록을 전달한다 (`.gemini/styleguide.md`)
+- 코드 리뷰 도구 설정에 사용 금지 기능 목록을 전달한다 (`.coderabbit.yaml`)
 - 위 목록 밖의 Kotlin 기능이 코드에 등장하면 그것은 리뷰 대상이다
 - 전환 비용: 금요일 시점에 진행이 막히면 Java로 전환한다.
   이 시점의 코드량에서 전환 비용은 1시간 이내로 추정된다
