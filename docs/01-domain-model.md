@@ -191,8 +191,13 @@ INV-2가 실질적 핵심이다. 재고 카운터와 예약 사실이 어긋나�
 `INV-2`의 카운트 대상은 **재고를 점유 중인 상태**다. `CONFIRMED` 하나가 아니다.
 
 ```
-재고 점유 상태 = { CONFIRMED, CHECKED_IN, CHECKED_OUT }
+재고 점유 상태 = { CONFIRMED, CHECKED_IN, CHECKED_OUT, TERMINATED }
 ```
+
+**`TERMINATED`(노쇼)가 여기 들어가는 것이 직관에 반한다.** 손님이 오지 않았는데 왜
+세는가 — 그 날짜 방을 잡아 두었고 당일은 되팔 수도 없었으므로 팔린 것이 맞다.
+아래 "기준은 타임라인 위의 구간이 아니다" 에서 다시 다룬다. 이 집합의 단일 진실
+원천은 `ReservationStatus.OCCUPYING` 이다.
 
 `CONFIRMED` 하나만 세면 **손님이 체크인만 해도 불변식이 깨진다.** 숫자로 따라가 본다.
 
