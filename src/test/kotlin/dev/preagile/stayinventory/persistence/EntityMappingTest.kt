@@ -112,8 +112,24 @@ class EntityMappingTest(
     }
 
     test("재고 격자가 복합 키로 왕복하고 total 은 계산값으로 나온다") {
-        // Given: 물리 10 + 오버부킹 2
+        // Given: 물리 10 + 오버부킹 2 에 3객실이 확정된 상태
+        //
+        // 예약 없이 sold 만 3 으로 두면 INV-2 가 깨진다 -- 카운터가 예약 사실보다
+        // 크다는 뜻이고, 그것은 "있는 방을 못 파는" 상태다. 불변식 훅이 실제로
+        // 이 픽스처를 잡아냈다. 재고를 만지는 픽스처는 예약 사실과 함께 만든다.
         val (roomTypeId, _) = seedGrid()
+        reservations.save(
+            Reservation(
+                roomTypeId = roomTypeId,
+                checkIn = stayDate,
+                checkOut = stayDate.plusDays(1),
+                status = ReservationStatus.CONFIRMED,
+                roomCount = 3,
+                channel = "DIRECT",
+                channelReservationId = "d0c1-total-check",
+                guestName = "확정손님",
+            ),
+        )
         inventories.save(
             DailyInventory(
                 id = DailyInventoryId(roomTypeId, stayDate),
