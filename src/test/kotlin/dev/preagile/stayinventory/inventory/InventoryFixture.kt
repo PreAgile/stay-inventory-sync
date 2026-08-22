@@ -28,7 +28,7 @@ class InventoryFixture(private val dataSource: DataSource) {
         physicalTotal: Int,
         overbookingLimit: Int = 0,
     ): Long = dataSource.connection.use { conn ->
-        conn.exec("INSERT INTO property (name) VALUES ('어반스테이 성수')")
+        conn.exec("INSERT INTO property (name) VALUES ('스테이 A')")
         conn.exec(
             "INSERT INTO room_type (property_id, name, capacity) " +
                 "SELECT id, '디럭스', 2 FROM property ORDER BY id DESC LIMIT 1",
@@ -87,13 +87,16 @@ class InventoryFixture(private val dataSource: DataSource) {
         status: dev.preagile.stayinventory.domain.ReservationStatus,
         roomCount: Int,
     ): Long = dataSource.connection.use { conn ->
+        // 채널 예약번호는 실제로 매번 달라야 한다. 리터럴이면 한 테스트에서
+        // 두 번 부르는 순간 UNIQUE(channel, channel_reservation_id) 로 죽는다.
+        val channelReservationId = "fx-" + java.util.UUID.randomUUID()
         conn.exec(
             """
             INSERT INTO reservation
                    (room_type_id, check_in, check_out, status, room_count,
                     channel, channel_reservation_id, guest_name)
             VALUES ($roomTypeId, DATE '$checkIn', DATE '$checkOut', '$status', $roomCount,
-                    'FIXTURE', 'fx-${'$'}{java.util.UUID.randomUUID()}', '픽스처손님')
+                    'FIXTURE', '$channelReservationId', '픽스처손님')
             """.trimIndent(),
         )
         conn.queryLong("SELECT max(id) FROM reservation")
@@ -109,6 +112,25 @@ class InventoryFixture(private val dataSource: DataSource) {
                 "WHERE room_type_id = $roomTypeId AND stay_date = DATE '$stayDate'",
         )
     }
+
+    /** 격자 행 하나를 지운다. "누군가 재고를 지웠다" 를 재현하기 위한 것이다. */
+    fun deleteGrid(roomTypeId: Long, stayDate: LocalDate) = dataSource.connection.use {
+        it.exec(
+            "DELETE FROM daily_inventory " +
+                "WHERE room_type_id = $roomTypeId AND stay_date = DATE '$stayDate'",
+        )
+    }
+
+    fun restoreGrid(roomTypeId: Long, stayDate: LocalDate, physicalTotal: Int, sold: Int) =
+        dataSource.connection.use {
+            it.exec(
+                """
+                INSERT INTO daily_inventory
+                       (room_type_id, stay_date, physical_total, overbooking_limit, sold)
+                VALUES ($roomTypeId, DATE '$stayDate', $physicalTotal, 0, $sold)
+                """.trimIndent(),
+            )
+        }
 
     fun sold(roomTypeId: Long, stayDate: LocalDate): Int = dataSource.connection.use { conn ->
         conn.queryLong(

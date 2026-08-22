@@ -68,7 +68,7 @@ class InventoryConcurrencyTest(
             checkIn = checkIn,
             checkOut = checkOut,
             roomCount = roomCount,
-            channel = "AIRBNB",
+            channel = "CHANNEL_A",
             channelReservationId = UUID.randomUUID().toString(),
             guestName = "김손님",
         )
@@ -241,7 +241,7 @@ class InventoryConcurrencyTest(
                 checkIn = march1,
                 checkOut = march1.plusDays(nights),
                 roomCount = 1,
-                channel = "AIRBNB",
+                channel = "CHANNEL_A",
                 channelReservationId = "x-$nights",
                 guestName = "김손님",
             ).stayDates()

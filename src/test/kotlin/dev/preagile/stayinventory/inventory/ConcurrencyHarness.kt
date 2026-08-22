@@ -27,8 +27,11 @@ fun runConcurrentlyOrFail(count: Int, task: (Int) -> Unit) {
     try {
         repeat(count) { index ->
             pool.submit {
-                startGate.await()
+                // await 도 try 안에 있어야 한다. 밖에 두면 여기서 인터럽트가 났을 때
+                // done 이 감소하지 않고, 그러면 아래 대기가 120초를 다 쓴 뒤
+                // "끝나지 않았다" 는 **원인과 다른 메시지**로 실패한다.
                 try {
+                    startGate.await()
                     task(index)
                 } catch (e: Throwable) {
                     escaped += e

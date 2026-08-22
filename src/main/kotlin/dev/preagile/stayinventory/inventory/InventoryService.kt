@@ -194,11 +194,18 @@ class InventoryService(
         }
 
         // ③ 오름차순으로 잠근다. 차감과 같은 순서여야 T6 이 성립한다.
-        val restored = reservation.stayDates().mapNotNull { date ->
+        val restored = reservation.stayDates().map { date ->
+            // 격자가 없으면 **전체를 롤백한다.** 처음에는 그 날짜만 건너뛰었는데,
+            // 그러면 예약은 CANCELED 로 커밋되고 일부 날짜만 복원된 상태가 남는다.
+            // 차감이 전 날짜의 격자를 요구하므로 이 상황은 누군가 격자 행을
+            // 지웠다는 뜻이고, **조용히 넘길 것이 아니라 시끄러워야 하는 사건**이다.
+            // 부분 복원은 되돌릴 방법도 없이 남는다.
             val row = inventories.lockForUpdate(reservation.roomTypeId, date)
-            // 격자가 사라진 날짜는 되돌릴 대상이 없다. 차감이 격자를 요구하므로
-            // 정상 경로에서는 일어나지 않지만, 여기서 죽으면 취소 자체가 막힌다.
-            if (row == null) null else date to row
+                ?: throw IllegalStateException(
+                    "복원할 재고 격자가 없다: 룸타입 ${reservation.roomTypeId} $date " +
+                        "(예약 $reservationId)",
+                )
+            date to row
         }
 
         // ④ 복원. 1 이 아니라 room_count 다 (A7).

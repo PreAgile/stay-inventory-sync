@@ -62,7 +62,7 @@ class InventoryCancelConcurrencyTest(
                 checkIn = march1,
                 checkOut = march1.plusDays(nights),
                 roomCount = roomCount,
-                channel = "AIRBNB",
+                channel = "CHANNEL_A",
                 channelReservationId = UUID.randomUUID().toString(),
                 guestName = "김손님",
             ),
@@ -115,7 +115,10 @@ class InventoryCancelConcurrencyTest(
         // Then: 예약당 정확히 한 번. 한 예약의 복원이 다른 예약의 판정에
         // 끼어들면 여기서 5 가 아닌 수가 나온다
         restored.get() shouldBe 5
+        // 둘째 숙박일까지 본다. 첫 날짜만 보면 복원이 한 날짜만 처리하는
+        // 회귀가 생겨도 통과한다 (reserve 기본값이 2박이다)
         fixture.sold(roomTypeId, march1) shouldBe 0
+        fixture.sold(roomTypeId, march1.plusDays(1)) shouldBe 0
     }
 
     // ── T6 ────────────────────────────────────────────────────────────────
@@ -140,13 +143,20 @@ class InventoryCancelConcurrencyTest(
                 return@runConcurrently
             }
 
+            // 전역 성공이 관측되면 멈춘다. 자기 성공만 보고 끝내면 승자 1명을
+            // 뺀 99개가 데드라인까지 같은 두 행에 FOR UPDATE 를 계속 던진다.
+            // 커넥션 풀이 20 이므로 대기가 중첩되고, lock_timeout(5s)에 걸린
+            // 55P03 이 데드락 카운트에 섞여 **정확성 위반이 없는데도 실패**한다.
+            //
+            // 두 번째 성공이 생기면 succeeded 가 2 가 되므로 "자리는 한 번만
+            // 팔린다" 는 증명력은 그대로다.
             val deadline = System.nanoTime() + TimeUnit.SECONDS.toNanos(10)
-            while (System.nanoTime() < deadline) {
+            while (System.nanoTime() < deadline && succeeded.get() == 0) {
                 val outcome = runCatching {
                     inventoryService.reserve(
                         ReserveCommand(
                             roomTypeId, march1, march1.plusDays(2), 1,
-                            "AIRBNB", UUID.randomUUID().toString(), "손님$index",
+                            "CHANNEL_A", UUID.randomUUID().toString(), "손님$index",
                         ),
                     )
                 }

@@ -55,7 +55,7 @@ class InventoryDeductionTest(
         checkIn = checkIn,
         checkOut = checkOut,
         roomCount = roomCount,
-        channel = "AIRBNB",
+        channel = "CHANNEL_A",
         channelReservationId = UUID.randomUUID().toString(),
         guestName = "김손님",
     )
@@ -224,7 +224,7 @@ class InventoryDeductionTest(
                 checkIn = march1.plusDays(3),
                 checkOut = march1,
                 roomCount = 1,
-                channel = "AIRBNB",
+                channel = "CHANNEL_A",
                 channelReservationId = "x",
                 guestName = "김손님",
             )

@@ -45,7 +45,7 @@ class InventoryRestoreTest(
                 checkIn = march1,
                 checkOut = march1.plusDays(nights),
                 roomCount = roomCount,
-                channel = "AIRBNB",
+                channel = "CHANNEL_A",
                 channelReservationId = UUID.randomUUID().toString(),
                 guestName = "김손님",
             ),
@@ -77,7 +77,7 @@ class InventoryRestoreTest(
         inventoryService.reserve(
             ReserveCommand(
                 roomTypeId, march1, march1.plusDays(1), 1,
-                "AIRBNB", UUID.randomUUID().toString(), "이손님",
+                "CHANNEL_A", UUID.randomUUID().toString(), "이손님",
             ),
         ).shouldBeInstanceOf<ReserveResult.Rejected>()
 
@@ -89,7 +89,7 @@ class InventoryRestoreTest(
         inventoryService.reserve(
             ReserveCommand(
                 roomTypeId, march1, march1.plusDays(1), 1,
-                "AIRBNB", UUID.randomUUID().toString(), "박손님",
+                "CHANNEL_A", UUID.randomUUID().toString(), "박손님",
             ),
         ).shouldBeInstanceOf<ReserveResult.Reserved>()
     }
@@ -161,9 +161,32 @@ class InventoryRestoreTest(
         fixture.sold(roomTypeId, march1) shouldBe 1
     }
 
+    test("격자가 사라진 날짜가 있으면 취소 전체를 롤백한다 — 부분 복원을 남기지 않는다") {
+        // Given: 2박 예약. 그 뒤 누군가 둘째 날 격자 행을 지웠다
+        val roomTypeId = fixture.seedGrid(march1, days = 3, physicalTotal = 10)
+        val reservationId = reserve(roomTypeId, nights = 2)
+        fixture.deleteGrid(roomTypeId, march1.plusDays(1))
+
+        // When: 취소를 시도한다
+        val thrown = runCatching { inventoryService.cancel(reservationId) }.exceptionOrNull()
+
+        // Then: 그 날짜만 건너뛰고 성공하면 예약은 CANCELED 인데 첫날만 복원된
+        // 상태가 남는다. 되돌릴 방법도 없이 남으므로 전체를 롤백한다
+        (thrown is IllegalStateException) shouldBe true
+
+        // 상태 전이도 함께 되돌아갔다 -- 같은 트랜잭션이었다는 증거다
+        reservations.findById(reservationId).orElseThrow()
+            .status shouldBe ReservationStatus.CONFIRMED
+        fixture.sold(roomTypeId, march1) shouldBe 1
+
+        // 지워진 격자를 되돌려 놓는다. 확정 예약이 점유한 날짜에 격자가 없으면
+        // INV-2 가 깨진 채로 다음 테스트에 넘어간다
+        fixture.restoreGrid(roomTypeId, march1.plusDays(1), physicalTotal = 10, sold = 1)
+    }
+
     test("없는 예약은 이미 취소된 것과 구분된다") {
-        // Given: 아무것도 없다
-        // When
+        // Given: 아무 예약도 없는 상태
+        // When: 없는 번호로 취소한다
         val result = inventoryService.cancel(999_999L)
 
         // Then: 없는 예약 취소는 데이터가 어긋났다는 신호다. 정상 재시도와
@@ -172,9 +195,11 @@ class InventoryRestoreTest(
     }
 
     test("취소 후에도 통보가 나가지 않은 상태로 남는다 — 릴레이가 가져간다") {
-        // Given / When
+        // Given: 예약 하나
         val roomTypeId = fixture.seedGrid(march1, days = 2, physicalTotal = 5)
         val reservationId = reserve(roomTypeId, nights = 1)
+
+        // When: 취소한다
         inventoryService.cancel(reservationId)
 
         // Then: 취소 트랜잭션 안에서 채널을 부르지 않는다. 부르면 락을 쥔 채
