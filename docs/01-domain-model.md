@@ -69,11 +69,14 @@ erDiagram
         bigint   aggregate_id
         varchar  event_type
         jsonb    payload
-        varchar  status       "PENDING|PUBLISHED|DEAD"
+        varchar  status       "PENDING|PUBLISHED|DEAD|SUPERSEDED"
         int      retry_count
         timestamptz next_attempt_at
         timestamptz created_at
         timestamptz published_at
+        bigint   room_type_id "NULL 허용. 재고 통보의 키 절반"
+        date     stay_date    "NULL 허용. 나머지 절반"
+        bigint   version      "NULL 허용. 같은 키 안에서 단조 증가"
     }
 
     CHANNEL_POLICY {

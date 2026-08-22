@@ -94,7 +94,28 @@ interface ReservationRepository : JpaRepository<Reservation, Long> {
 
 interface InventoryHoldRepository : JpaRepository<InventoryHold, Long>
 
-interface OutboxEventRepository : JpaRepository<OutboxEvent, Long>
+interface OutboxEventRepository : JpaRepository<OutboxEvent, Long> {
+
+    /**
+     * 그 키의 다음 버전 번호.
+     *
+     * **경합 방어가 이 쿼리 안에 없다.** 호출부가 이미 해당
+     * `(room_type_id, stay_date)` 의 `daily_inventory` 행을 `FOR UPDATE` 로 잠근
+     * 상태여야 하고, 그 락이 곧 이 값의 단조성을 보장한다.
+     *
+     * 락 없이 부르면 두 트랜잭션이 같은 번호를 받아 간다. 그러면 릴레이의
+     * `>` 비교가 둘 중 어느 것도 낡았다고 판정하지 않아 순서 방어가 통째로 사라진다.
+     */
+    @Query(
+        value = "SELECT COALESCE(MAX(version), 0) + 1 FROM outbox_event " +
+            "WHERE room_type_id = :roomTypeId AND stay_date = :stayDate",
+        nativeQuery = true,
+    )
+    fun nextVersionFor(
+        @Param("roomTypeId") roomTypeId: Long,
+        @Param("stayDate") stayDate: LocalDate,
+    ): Long
+}
 
 interface InboundMessageRepository : JpaRepository<InboundMessage, Long> {
 
