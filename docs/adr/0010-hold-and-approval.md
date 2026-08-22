@@ -45,9 +45,12 @@ CREATE TABLE inventory_hold (
     room_type_id   BIGINT      NOT NULL,
     stay_date      DATE        NOT NULL,   -- daily_inventory 와 같은 결
     reservation_id BIGINT      NOT NULL,   -- 다일 선점을 묶는 키를 겸한다
-    room_count     INT         NOT NULL,   -- A7. reservation 과 같은 값
+    room_count     INT         NOT NULL CHECK (room_count > 0),  -- A7
     expires_at     TIMESTAMPTZ NOT NULL,   -- 만료 판정
-    released_at    TIMESTAMPTZ             -- 전환·해제 판정. NULL 이면 살아 있다
+    released_at    TIMESTAMPTZ,            -- 전환·해제 판정. NULL 이면 살아 있다
+
+    FOREIGN KEY (room_type_id, stay_date) REFERENCES daily_inventory (room_type_id, stay_date),
+    FOREIGN KEY (reservation_id) REFERENCES reservation (id)
 );
 
 CREATE INDEX ix_hold_live ON inventory_hold (room_type_id, stay_date)
@@ -189,9 +192,16 @@ CHECKED_IN -> TERMINATED                           노쇼. 복원 없음 (결정
 
 `expires_at` 하나로 두 구간을 다루므로 **만료 판정에 `reservation.status` 를 볼 필요가 없다.**
 
-기각: **자동 승인.** 사장님이 모르는 상태에서 방이 확정 판매되어 오프라인 현장과 충돌한다.
-그리고 만료를 통해 `sold` 를 올려야 하므로 결정 2 의 lazy 판정이 깨진다 —
-스케줄러가 다시 정합성 경로에 들어온다.
+기각: **자동 승인.** 기각 근거가 둘이고 성질이 다르므로 갈라 적는다.
+
+- **운영 위험** — 사장님이 모르는 상태에서 방이 확정 판매되어 오프라인 현장과 충돌한다.
+  거절할 기회가 없으므로 승인형을 도입한 이유 자체가 사라진다
+- **정합성 구조** — 자동 승인은 시한 초과 시 `CONFIRMED` 로 보내며 **`sold` 를 올린다.**
+  즉 만료 처리가 재고를 바꾸는 사건이 되고, 그러면 결정 2 의 lazy 판정이 성립하지 않는다 —
+  누군가 실행해야 하므로 **스케줄러가 다시 정합성 경로에 들어온다**
+
+반면 이 ADR 이 택한 자동 거절은 만료 시 **`sold` 를 건드리지 않고 선점만 해제**한다.
+그것이 스케줄러를 정합성 책임에서 빼낼 수 있는 이유다.
 
 기각: **무기한 대기.** `expires_at` 이 NULL 이 되어 만료 판정에 NULL 분기가 들어온다.
 그러면 "시간이 지났는가"를 시간 비교로 답할 수 없고, 이 설계의 가장 좋은 성질을 직접 깬다.
@@ -380,8 +390,16 @@ HELD -> PENDING_APPROVAL (또는 CONFIRMED) 전이 시
 
 `INV-4` 하나가 늘고 `INV-1` ~ `INV-3` 은 그대로다. `T1`~`T4` 도 그대로 유효하다.
 
-`INV-4` 가 `INV-1` 의 상한을 함의한다(선점 수가 0 이상이므로). 그래도 둘 다 둔다 —
-`INV-1` 은 하한 `0 <= sold` 도 담고 있고, 그 하한은 **복원이 두 번 일어났을 때 잡히는 유일한 등식**이다.
+`INV-4` 가 `INV-1` 의 상한을 함의한다. **다만 전제가 하나 필요하다** —
+`SUM(유효 선점의 room_count)` 가 **음수가 아니어야** 한다.
+
+`room_count` 가 `INT NOT NULL` 만이면 음수를 막지 못하고, 그러면
+`sold + SUM(room_count) <= total` 이 통과하면서 `sold > total` 이 성립할 수 있다.
+**함의가 깨진다.** 그래서 스키마에 `CHECK (room_count > 0)` 을 둔다 —
+`reservation.room_count` 에도 같은 제약이 필요하다(`A7`).
+
+그 전제 위에서도 둘 다 둔다. `INV-1` 은 하한 `0 <= sold` 도 담고 있고,
+그 하한은 **복원이 두 번 일어났을 때 잡히는 유일한 등식**이다.
 
 추가할 테스트는 `docs/03-testing-strategy.md` 의 `T7`~`T10` 이다.
 `T8` 이 결정 3 의 증명이고, `T10` 이 결정 9 의 증명이며,

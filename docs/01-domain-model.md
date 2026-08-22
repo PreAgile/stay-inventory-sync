@@ -124,7 +124,7 @@ stateDiagram-v2
 "어떤 상태에서 어디로 갈 수 있는가"가 코드에 데이터로 존재해야 테스트할 수 있다.
 
 **재고 복원은 `CONFIRMED -> CANCELED`에서만 일어난다.**
-`PENDING -> CANCELED`는 아직 차감된 적이 없으므로 복원 대상이 아니다.
+선점 상태(`HELD` · `PENDING_APPROVAL`)에서 오는 종료는 아직 차감된 적이 없으므로 복원 대상이 아니다.
 이 비대칭을 놓치면 재고가 부풀어 오른다.
 
 ---
@@ -257,15 +257,17 @@ sold = 0  ->  "3월 1일 디럭스룸은 안 팔렸다"  ->  같은 방이 다�
 
 | 상태 | 차감된 적 | 복원됨 | 점유 |
 |---|---|---|---|
-| `PENDING` | 아니오 | — | **아님** — 차감 전이다 |
+| `HELD` · `PENDING_APPROVAL` | 아니오 | — | **아님** — 선점 중이며 아직 차감되지 않았다. `INV-4` 가 따로 센다 |
+| `EXPIRED` · `REJECTED` | 아니오 | — | **아님** — 차감된 적이 없다 |
 | `CONFIRMED` | 예 | 아니오 | 점유 |
 | `CHECKED_IN` | 예 | 아니오 | 점유 |
 | `CHECKED_OUT` | 예 | 아니오 | 점유 |
+| `TERMINATED` | 예 | 아니오 | 점유 — 노쇼. 그 날짜는 소비됐다 |
 | `CANCELED` | 예 | **예** | **아님** — 복원됐다 |
 
-**빠지는 것이 둘이고, 빠지는 이유가 서로 다르다.** `PENDING` 은 아직 차감되지 않았고
-`CANCELED` 는 차감됐다가 되돌려졌다. 결과는 같지만 경로가 달라서
-복원 알고리즘이 이 둘을 다르게 다룬다 — `PENDING -> CANCELED` 는 복원 대상이 아니다.
+**빠지는 이유가 두 갈래다.** `HELD` · `PENDING_APPROVAL` · `EXPIRED` · `REJECTED` 는 **아직 차감되지 않았고**,
+`CANCELED` 는 **차감됐다가 되돌려졌다.** 결과는 같지만 경로가 달라서 복원 알고리즘이 둘을 다르게 다룬다 —
+차감된 적 없는 상태에서 오는 종료는 복원 대상이 아니다.
 
 이 기준은 상태가 늘어도 흔들리지 않는다. 새 상태가 생기면 두 질문에 답하면 되고,
 **정의를 다시 쓰지 않는다.**
@@ -326,7 +328,22 @@ enum class ReservationStatus {
 
 불변식 검증기와 도메인 로직이 같은 정의를 본다. 두 곳이 어긋날 자리가 없다.
 
-세 집합으로 갈린다. `OCCUPYING` 은 `INV-2` 가 쓰고 `HOLDING` 은 `INV-4` 가 쓴다.
+세 집합으로 갈린다. 다만 **두 집합의 쓰임이 다르다.**
+
+| | 판정에 필요한 것 |
+|---|---|
+| `OCCUPYING` (`INV-2`) | **상태만으로 결정된다.** 그 상태면 `sold` 에 반영되어 있다 |
+| `HOLDING` (`INV-4`) | **상태만으로는 부족하다.** `HELD` 인 행 중 만료되거나 이미 해제된 것은 세지 않는다 |
+
+```
+유효 선점 = status IN HOLDING          상태 후보
+            AND expires_at > now()      만료되지 않았고
+            AND released_at IS NULL     아직 확정·해제되지도 않았다
+```
+
+**`holdsInventory` 는 후보를 좁히는 것까지다.** 실제 판정은 행 조건 둘이 함께 한다 —
+그 둘을 빼면 만료된 선점까지 세어 잔여가 실제보다 적게 나온다.
+`INV-4` 검증기는 상태가 아니라 **이 세 조건을 직접** 확인해야 한다.
 
 ```
 점유 (sold 에 반영)  = { CONFIRMED, CHECKED_IN, CHECKED_OUT, TERMINATED }
@@ -421,14 +438,22 @@ CREATE TABLE inventory_hold (
     room_type_id   BIGINT      NOT NULL,
     stay_date      DATE        NOT NULL,   -- daily_inventory 와 같은 결
     reservation_id BIGINT      NOT NULL,   -- 다일 선점을 묶는 키를 겸한다
-    room_count     INT         NOT NULL,   -- A7. reservation 과 같은 값
+    room_count     INT         NOT NULL CHECK (room_count > 0),  -- A7
     expires_at     TIMESTAMPTZ NOT NULL,   -- 만료 판정
-    released_at    TIMESTAMPTZ             -- 전환·해제 판정. NULL 이면 살아 있다
+    released_at    TIMESTAMPTZ,            -- 전환·해제 판정. NULL 이면 살아 있다
+
+    FOREIGN KEY (room_type_id, stay_date) REFERENCES daily_inventory (room_type_id, stay_date),
+    FOREIGN KEY (reservation_id) REFERENCES reservation (id)
 );
 
 CREATE INDEX ix_hold_live ON inventory_hold (room_type_id, stay_date)
     WHERE released_at IS NULL;
 ```
+
+FK 를 둔다. ERD 가 관계를 표시하므로 DDL 도 그것을 강제해야 한다 —
+표시만 하고 강제하지 않으면 **다이어그램이 검증되지 않는 주석**이 된다.
+
+`CHECK (room_count > 0)` 이 `INV-4` 의 증명 전제다. 아래 불변식 절을 볼 것.
 
 ### 선점 획득 알고리즘
 
@@ -455,16 +480,36 @@ INSERT 는 기존 행과 경합하지 않으므로 이 순서가 락 구조를 �
 ### 선점 해제와 확정
 
 ```
-확정   [트랜잭션]  reservation 조건부 UPDATE (WHERE status = 'HELD')
+확정   [트랜잭션]  reservation 조건부 UPDATE
+                    즉시확정 경로 : WHERE status = 'HELD'
+                    승인형 경로   : WHERE status = 'PENDING_APPROVAL'
                   daily_inventory 잠금, sold += room_count
                   inventory_hold.released_at = now()
                   outbox_event INSERT
 
+대기   [트랜잭션]  reservation 조건부 UPDATE (WHERE status = 'HELD')
+                  status = PENDING_APPROVAL, inventory_hold.expires_at 을 승인 시한으로 연장
+                  선점은 유지된다. sold 는 건드리지 않는다
+
 만료   판정만 시간 조건으로 한다. sold 는 건드리지 않는다
-       released_at 마킹과 승인 취소 이벤트는 얇은 스케줄러가 발행한다 (ADR-0010 결정 6)
+       released_at 마킹은 얇은 스케줄러가 한다 (ADR-0010 결정 6)
 ```
 
+**확정 경로가 둘이다.** 즉시확정 채널은 `HELD` 에서, 승인형 채널은 `PENDING_APPROVAL` 에서 온다.
+조건부 UPDATE 의 시작 상태만 다르고 나머지는 같으므로 **같은 트랜잭션 형태를 공유한다.**
+한쪽만 구현하면 다른 쪽 예약이 확정되지 않거나 계약 없는 별도 경로가 생긴다.
+
 **만료는 재고를 되돌리는 사건이 아니다.** `sold` 에 들어간 적이 없으므로 되돌릴 것이 없다.
+
+다만 **만료 시 발행할 이벤트는 상태에 따라 다르다.**
+
+| 만료된 상태 | 승인 취소 이벤트 | 왜 |
+|---|---|---|
+| `HELD` | **발행하지 않는다** | 결제 전이므로 취소할 승인이 없다 |
+| `PENDING_APPROVAL` | **발행한다** | 카드 승인이 걸려 있다 |
+
+`released_at` 갱신과 승인 취소 `outbox_event` INSERT 는 **같은 트랜잭션**이다(절대 규칙 3).
+분리하면 "선점은 풀렸는데 승인은 남은" 상태가 생긴다.
 그래서 그 스케줄러는 장애가 나도 정합성을 깨지 않는다.
 
 ---

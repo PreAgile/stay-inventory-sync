@@ -107,7 +107,8 @@ class Reservation(
 
 ### 7. 재고 복원은 `CONFIRMED -> CANCELED`에서만 일어난다
 
-`PENDING -> CANCELED`는 차감된 적이 없다. 이 비대칭을 놓치면 재고가 부풀어 오른다.
+선점 상태(`HELD` · `PENDING_APPROVAL`)에서 오는 종료는 차감된 적이 없다.
+이 비대칭을 놓치면 재고가 부풀어 오른다.
 
 ### 8. H2를 쓰지 않는다
 
@@ -199,8 +200,9 @@ test("동시 요청 하에서 오버부킹은 발생하지 않는다") { ... }
 INV-1  0 <= sold <= total
        total = physical_total + overbooking_limit   계산값이다 (ADR-0007)
 INV-2  sold == 해당 날짜를 포함하고 재고를 점유 중인 예약의 room_count 합
-       점유 상태 = { CONFIRMED, CHECKED_IN, CHECKED_OUT }
-       차감된 적 없음(PENDING)과 복원됨(CANCELED)은 둘 다 제외한다
+       점유 상태 = { CONFIRMED, CHECKED_IN, CHECKED_OUT, TERMINATED }
+       차감된 적 없음(HELD·PENDING_APPROVAL·EXPIRED·REJECTED)과
+       복원됨(CANCELED)은 둘 다 제외한다
 INV-3  checkIn < checkOut
 INV-4  sold + SUM(유효 선점의 room_count) <= total   과선점 금지 (ADR-0010)
        유효 선점 = expires_at > now() AND released_at IS NULL
