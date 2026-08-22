@@ -100,13 +100,29 @@ class OutboxRelay(
                     // 429 는 실패가 아니라 "나중에 다시 하라" 는 신호다.
                     // 채널이 알려 준 대기 시간이 있으면 그것을 따르되 1분 하한을 지킨다.
                     val wait = maxOf(result.retryAfterSeconds ?: 0L, RATE_LIMIT_MIN_WAIT_SECONDS)
-                    scheduleRetry(event, now.plusSeconds(wait))
+                    // **retry_count 를 올리지 않는다.** 올리면 리밋이 오래 걸린
+                    // 채널의 정상 이벤트가 다섯 번 만에 DEAD 로 떨어진다 --
+                    // 사장님이 예약을 많이 받았다는 이유로 통보가 죽는다.
+                    // 소진 판정은 "몇 번 실패했는가" 를 세는 것이지
+                    // "몇 번 미뤘는가" 를 세는 것이 아니다.
+                    scheduleRetry(event, now.plusSeconds(wait), countAsFailure = false)
                     report.copy(rateLimited = report.rateLimited + 1)
                 }
 
                 is ChannelSyncResult.Retryable -> {
-                    scheduleRetry(event, now.plus(backoffFor(event.retryCount)))
-                    report.copy(retried = report.retried + 1)
+                    if (event.retryCount + 1 > MAX_RETRIES) {
+                        // 소진. 같은 요청을 무한히 재시도하면 그 사실이 큐 길이에
+                        // 묻히고, 사람이 봐야 할 것을 아무도 안 본다.
+                        log.warn(
+                            "재시도 소진으로 DEAD: id={} retryCount={} reason={}",
+                            event.id, event.retryCount, result.reason,
+                        )
+                        markDead(event.id)
+                        report.copy(dead = report.dead + 1)
+                    } else {
+                        scheduleRetry(event, now.plus(backoffFor(event.retryCount)))
+                        report.copy(retried = report.retried + 1)
+                    }
                 }
 
                 is ChannelSyncResult.Permanent -> {
@@ -200,13 +216,25 @@ class OutboxRelay(
         )
     }
 
-    fun scheduleRetry(event: PendingOutboxEvent, nextAttemptAt: Instant) {
+    /**
+     * 다음 시도 시각을 미룬다.
+     *
+     * @param countAsFailure `retry_count` 를 올릴지. **레이트 리밋은 올리지 않는다** --
+     *   소진 판정은 "몇 번 실패했는가" 이지 "몇 번 미뤘는가" 가 아니다.
+     */
+    fun scheduleRetry(
+        event: PendingOutboxEvent,
+        nextAttemptAt: Instant,
+        countAsFailure: Boolean = true,
+    ) {
+        val increment = if (countAsFailure) 1 else 0
         jdbc.update(
             """
             UPDATE outbox_event
-               SET retry_count = retry_count + 1, next_attempt_at = ?
+               SET retry_count = retry_count + ?, next_attempt_at = ?
              WHERE id = ?
             """.trimIndent(),
+            increment,
             java.sql.Timestamp.from(nextAttemptAt),
             event.id,
         )
@@ -249,6 +277,15 @@ class OutboxRelay(
 
         /** 429 를 받으면 최소 1분 중지 — Channex 공개 문서 권고. */
         const val RATE_LIMIT_MIN_WAIT_SECONDS = 60L
+
+        /**
+         * 이 횟수를 넘게 **실패**하면 DEAD 로 보낸다.
+         *
+         * 백오프 표가 여섯 칸이므로 마지막 간격(30분)까지 가 본 뒤 포기하는 셈이다.
+         * 무한 재시도를 두지 않는 이유는 그 이벤트가 영원히 큐에 남아 **큐 길이가
+         * 지표로서 의미를 잃기** 때문이다.
+         */
+        const val MAX_RETRIES = 5
 
         /**
          * 임대 기간. 이 시간 안에 발행이 끝나지 않으면 다른 인스턴스가 다시 집는다.
