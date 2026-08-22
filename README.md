@@ -82,7 +82,7 @@ Channex(채널매니저) 기준으로 5XX 응답 시 최대 10회, 최종 시도
 
 ### 만든 것
 
-- 도메인 모델 5개 테이블 (`docs/01-domain-model.md`)
+- 도메인 모델 8개 테이블 (`docs/01-domain-model.md`)
 - 예약 생성 API — 다일 재고의 원자적 차감
 - 예약 취소 API — 재고 복원
 - Outbox 테이블 + 릴레이
@@ -115,10 +115,11 @@ erDiagram
     PROPERTY        ||--o{ ROOM_TYPE       : "운영한다"
     ROOM_TYPE       ||--o{ DAILY_INVENTORY : "날짜별 재고"
     ROOM_TYPE       ||--o{ RESERVATION     : "예약 대상"
+    ROOM_TYPE       ||--o{ CHANNEL_POLICY  : "채널별 노출 규칙"
     RESERVATION     ||--o{ INVENTORY_HOLD  : "확정 전 선점"
     DAILY_INVENTORY ||--o{ INVENTORY_HOLD  : "그 날짜를 선점당한다"
-    DAILY_INVENTORY ||--o{ CHANNEL_POLICY  : "채널별 노출 규칙"
-    RESERVATION     ||--o{ OUTBOX_EVENT    : "나갈 통보"
+    DAILY_INVENTORY ||..o{ CHANNEL_POLICY  : "같은 격자. FK 아님"
+    RESERVATION     ||..o{ OUTBOX_EVENT    : "다형 참조. FK 아님"
 
     PROPERTY {
         bigint id PK
@@ -148,7 +149,7 @@ erDiagram
         int room_count
     }
     CHANNEL_POLICY {
-        bigint room_type_id PK "FK"
+        bigint room_type_id PK "FK -> room_type.id"
         date stay_date PK
         varchar channel PK
         varchar kind PK "CLOSED | CAP | OFFSET"
@@ -169,7 +170,11 @@ erDiagram
     }
 ```
 
-### 이 그림에서 봐야 할 네 가지
+**실선(`--`)은 DB FK 로 강제되는 관계, 점선(`..`)은 키를 공유하거나 논리적으로만 이어진
+관계다.** `channel_policy` 를 `daily_inventory` 에 FK 로 묶으면 **재고 행이 아직 없는 미래
+날짜에 노출 상한을 미리 설정하는 것이 막힌다** — 캡형 운영에서 실제로 필요한 동작이다.
+
+### 이 그림에서 봐야 할 다섯 가지
 
 **① `total` 컬럼이 없다.** `physical_total` 과 `overbooking_limit` 두 개이고
 합계는 계산값이다. 하나로 합치면 지표 · 경고 · 되돌림 셋을 동시에 잃는다
@@ -180,15 +185,25 @@ erDiagram
 
 **③ 세 개의 `UNIQUE` 가 멱등성을 DB 에 맡긴다.** 애플리케이션이 아니라 제약이 판정한다.
 
+```text
+reservation      UNIQUE(channel, channel_reservation_id)          중복 웹훅
+inbound_message  UNIQUE NULLS NOT DISTINCT                        같은 알림 재처리
+                   (channel, external_id, sequence_key)
+channel_policy   PK(room_type_id, stay_date, channel, kind)       규칙 중복
 ```
-reservation      UNIQUE(channel, channel_reservation_id)   중복 웹훅
-inbound_message  UNIQUE(channel, external_id, sequence_key) 같은 알림 재처리
-channel_policy   PK(room_type_id, stay_date, channel, kind) 규칙 중복
-```
+
+`inbound_message` 의 `NULLS NOT DISTINCT` 가 빠지면 **제약이 아무것도 막지 못한다.**
+`sequence_key` 는 NULL 일 수 있고(순서키를 주지 않는 채널이 있다) PostgreSQL 에서
+기본적으로 **NULL 은 NULL 과 같지 않다.** 순서키를 주지 않는 채널에서만 멱등이 뚫리므로
+조용하다. `NULLS NOT DISTINCT` 는 PostgreSQL 15 이상이며, 이것이 스택 하한을 고정한다.
 
 **④ `INBOUND_MESSAGE` 에 선이 하나도 없는 것은 의도한 것이다.** 받은 시점에는 이 알림이
 어느 예약을 가리키는지 모른다 — `payload` 를 해석해야 알 수 있고 해석은 실패할 수 있다.
 FK 를 걸면 **해석에 실패한 알림을 저장할 수 없게 되고, 받은 사실 자체가 사라진다.**
+
+**⑤ `sequence_key` 는 NULL 일 수 있고, 그래서 `NULLS NOT DISTINCT` 가 필요하다.**
+PostgreSQL 에서 기본적으로 NULL 은 NULL 과 같지 않다. 빼면 순서키를 주지 않는 채널에서만
+멱등이 뚫리므로 **조용하다** — 순서키를 주는 채널로 테스트하면 통과한다.
 
 ### 불변식
 

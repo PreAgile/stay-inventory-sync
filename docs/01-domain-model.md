@@ -8,9 +8,10 @@ erDiagram
     ROOM_TYPE ||--o{ DAILY_INVENTORY : "날짜별 재고를 갖는다"
     ROOM_TYPE ||--o{ RESERVATION : "예약 대상이 된다"
     RESERVATION ||--o{ INVENTORY_HOLD : "확정 전 재고를 선점한다"
-    RESERVATION ||--o{ OUTBOX_EVENT : "이벤트를 발생시킨다"
+    RESERVATION ||..o{ OUTBOX_EVENT : "이벤트를 발생시킨다. 다형 참조라 FK 아님"
+    ROOM_TYPE ||--o{ CHANNEL_POLICY : "채널별 노출 규칙을 갖는다"
     DAILY_INVENTORY ||--o{ INVENTORY_HOLD : "그 날짜 재고를 선점당한다"
-    DAILY_INVENTORY ||--o{ CHANNEL_POLICY : "채널별 노출 규칙을 갖는다"
+    DAILY_INVENTORY ||..o{ CHANNEL_POLICY : "같은 (룸타입, 날짜) 격자. FK 아님"
 
     PROPERTY {
         bigint   id PK
@@ -24,6 +25,7 @@ erDiagram
         bigint   property_id FK
         varchar  name
         int      capacity
+        varchar  booking_mode "INSTANT|ON_REQUEST (ADR-0010)"
         timestamptz created_at
     }
 
@@ -74,7 +76,7 @@ erDiagram
     }
 
     CHANNEL_POLICY {
-        bigint   room_type_id PK "FK"
+        bigint   room_type_id PK "FK -> room_type.id"
         date     stay_date    PK
         varchar  channel      PK
         varchar  kind         PK "CLOSED|CAP|OFFSET"
@@ -88,7 +90,7 @@ erDiagram
         varchar  channel      UK "external_id·sequence_key 와 복합 유니크"
         varchar  kind         "BOOKING|POLICY"
         varchar  external_id  UK "채널이 부여한 식별자"
-        varchar  sequence_key UK "순서 판정용. 없을 수 있다"
+        varchar  sequence_key UK "순서 판정용. NULL 가능 -> NULLS NOT DISTINCT 필수"
         jsonb    payload      "받은 그대로. 해석하지 않는다"
         varchar  status       "PENDING|PROCESSED|IGNORED|DEAD"
         int      attempt_count
@@ -98,6 +100,10 @@ erDiagram
 ```
 
 ### ERD 를 읽는 두 가지 주의
+
+**선 모양이 의미를 갖는다.** 실선(`--`)은 **DB FK 로 강제되는 관계**이고,
+점선(`..`)은 **키를 공유하거나 논리적으로만 이어진 관계**다. 점선을 FK 로 읽고
+마이그레이션에 제약을 넣으면 없어야 할 제약이 생긴다.
 
 **`INBOUND_MESSAGE` 에는 선이 하나도 없다.** 그리다 만 것이 아니라 **의도한 것**이다.
 Inbox 의 임무는 "받았다는 사실"을 최대한 빨리 남기는 것이고, 그 시점에는 이 알림이
@@ -112,14 +118,29 @@ Inbox 의 임무는 "받았다는 사실"을 최대한 빨리 남기는 것이�
 | `PROPERTY -> ROOM_TYPE` · `ROOM_TYPE -> DAILY_INVENTORY` · `ROOM_TYPE -> RESERVATION` | 예 — FK |
 | `RESERVATION -> INVENTORY_HOLD` · `DAILY_INVENTORY -> INVENTORY_HOLD` | 예 — FK 둘 (`#2`) |
 | `RESERVATION -> OUTBOX_EVENT` | **아니오** — `aggregate_id` 는 타입이 섞이는 다형 참조다 |
-| `DAILY_INVENTORY -> CHANNEL_POLICY` | **아니오** — 키를 공유할 뿐이다. 재고 행이 없는 날짜에도 정책은 설 수 있다 |
+| `ROOM_TYPE -> CHANNEL_POLICY` | 예 — FK (`room_type_id -> room_type.id`) |
+| `DAILY_INVENTORY -> CHANNEL_POLICY` | **아니오** — `(room_type_id, stay_date)` 격자를 공유할 뿐이다 |
+
+`DAILY_INVENTORY -> CHANNEL_POLICY` 에 FK 를 걸면 **재고 행이 아직 없는 미래 날짜에
+노출 상한을 미리 설정하는 것이 막힌다.** 캡형 운영에서 실제로 필요한 동작이므로
+이 관계는 격자 공유로만 둔다 (ADR-0009 · `#36`).
 
 **엔티티 사이에 선이 있어도 JPA 연관 매핑은 두지 않는다.** 이 그림은 데이터의 모양이고,
 코드에서 참조는 ID 값으로만 한다 (ADR-0008 · 절대 규칙 12).
 
-### 왜 5개인가
+### 왜 8개인가
 
-의도적으로 최소화했다. 실제 PMS라면 `rate_plan`, `room`(개별 호실), `guest`, `folio`,
+의도적으로 최소화했다. 초안은 5개였고 설계 결정 둘이 셋을 더했다 —
+`inventory_hold`(ADR-0010) · `inbound_message` · `channel_policy`(ADR-0009).
+셋 다 **없으면 조용히 깨지는 상태가 생겨서** 넣은 것이다.
+
+| 추가 | 없으면 |
+|---|---|
+| `inventory_hold` | 확정 전 재고를 잡아둘 곳이 없어 결제 중에 방이 팔린다 |
+| `inbound_message` | "알림은 왔는데 처리는 안 된" 상태가 남지 않는다 |
+| `channel_policy` | 채널이 바꾼 것이 재고인지 정책인지 구분할 장부가 없다 |
+
+실제 PMS라면 `rate_plan`, `room`(개별 호실), `guest`, `folio`,
 `housekeeping_task`가 더 있어야 하지만, 이번 문제(재고 정합성)를 증명하는 데
 기여하지 않는 테이블은 전부 제외했다.
 
@@ -133,8 +154,11 @@ Inbox 의 임무는 "받았다는 사실"을 최대한 빨리 남기는 것이�
 | 제약 | 위치 | 막는 것 |
 |---|---|---|
 | `PK(room_type_id, stay_date)` | daily_inventory | 동일 날짜 재고 행의 중복 생성 |
-| `CHECK (sold >= 0 AND sold <= total)` | daily_inventory | 과다 차감 / 음수 재고 |
+| `CHECK (sold >= 0 AND sold <= physical_total + overbooking_limit)` | daily_inventory | 과다 차감 / 음수 재고 |
+| `CHECK (room_count > 0)` | reservation · inventory_hold | 음수 수량이 `INV-4` 를 통과하며 `INV-1` 을 깨는 것 |
 | `UNIQUE(channel, channel_reservation_id)` | reservation | **중복 웹훅의 1차 방어선** |
+| `UNIQUE NULLS NOT DISTINCT(channel, external_id, sequence_key)` | inbound_message | 같은 알림의 재처리 |
+| `PK(room_type_id, stay_date, channel, kind)` | channel_policy | 같은 채널·날짜에 규칙 중복 |
 | `INDEX(status, next_attempt_at)` | outbox_event | 릴레이 폴링 성능 |
 
 `UNIQUE(channel, channel_reservation_id)`가 이 스키마에서 가장 중요한 한 줄이다.
