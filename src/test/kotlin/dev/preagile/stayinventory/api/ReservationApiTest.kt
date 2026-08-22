@@ -163,6 +163,55 @@ class ReservationApiTest(
         fixture.sold(roomTypeId, march1) shouldBe 1
         reservations.count() shouldBe 1
     }
+    // ── 취소 ──────────────────────────────────────────────────────────────
+    test("취소하면 200 과 되돌린 객실 수가 나오고 재고가 돌아온다") {
+        // Given: 2객실 2박 예약
+        val roomTypeId = fixture.seedGrid(march1, days = 3, physicalTotal = 10)
+        val created = mockMvc.perform(
+            post("/reservations").contentType(MediaType.APPLICATION_JSON)
+                .content(body(roomTypeId, roomCount = 2)),
+        ).andReturn().response.contentAsString
+        val reservationId = Regex("\\d+").find(created)!!.value
+
+        // When
+        val response = mockMvc.perform(post("/reservations/$reservationId/cancel"))
+            .andReturn().response
+
+        // Then
+        response.status shouldBe 200
+        response.contentAsString shouldContain "CANCELED"
+        fixture.sold(roomTypeId, march1) shouldBe 0
+    }
+
+    test("이미 취소된 예약을 또 취소해도 200 이다 — 채널 재시도를 유발하지 않는다") {
+        // Given: 취소된 예약
+        val roomTypeId = fixture.seedGrid(march1, days = 3, physicalTotal = 10)
+        val created = mockMvc.perform(
+            post("/reservations").contentType(MediaType.APPLICATION_JSON)
+                .content(body(roomTypeId)),
+        ).andReturn().response.contentAsString
+        val reservationId = Regex("\\d+").find(created)!!.value
+        mockMvc.perform(post("/reservations/$reservationId/cancel"))
+
+        // When: 같은 취소가 또 온다
+        val response = mockMvc.perform(post("/reservations/$reservationId/cancel"))
+            .andReturn().response
+
+        // Then: 4xx 를 주면 채널이 실패로 간주해 최대 24시간 재시도한다.
+        // 멱등하게 처리했다면 그것은 성공이다 (절대 규칙 5)
+        response.status shouldBe 200
+        response.contentAsString shouldContain "ALREADY_CANCELED"
+        fixture.sold(roomTypeId, march1) shouldBe 0
+    }
+
+    test("없는 예약을 취소하면 404 다 — 정상 재시도와 구분된다") {
+        // Given / When
+        val response = mockMvc.perform(post("/reservations/999999/cancel"))
+            .andReturn().response
+
+        // Then: 뭉치면 데이터가 어긋났다는 진짜 신호가 재시도 노이즈에 묻힌다
+        response.status shouldBe 404
+    }
 }) {
     override fun extensions() = listOf(SpringExtension)
 }

@@ -1,5 +1,6 @@
 package dev.preagile.stayinventory.api
 
+import dev.preagile.stayinventory.inventory.CancelResult
 import dev.preagile.stayinventory.inventory.InventoryService
 import dev.preagile.stayinventory.inventory.ReserveCommand
 import dev.preagile.stayinventory.inventory.ReserveResult
@@ -10,6 +11,7 @@ import jakarta.validation.constraints.NotBlank
 import org.springframework.http.HttpStatus
 import org.springframework.http.ResponseEntity
 import org.springframework.web.bind.annotation.ExceptionHandler
+import org.springframework.web.bind.annotation.PathVariable
 import org.springframework.web.bind.annotation.PostMapping
 import org.springframework.web.bind.annotation.RequestBody
 import org.springframework.web.bind.annotation.RequestMapping
@@ -58,6 +60,27 @@ class ReservationController(
         }
     }
 
+    /**
+     * 취소. **이미 취소된 예약에도 2xx 를 준다.**
+     *
+     * 4xx 를 주면 채널이 실패로 간주해 최대 24시간 재시도한다 (절대 규칙 5).
+     * 멱등하게 처리했다면 그것은 성공이다. 없는 예약만 404 로 가른다 --
+     * 그쪽은 데이터가 어긋났다는 신호이고, 재시도 노이즈에 묻히면 안 된다.
+     */
+    @PostMapping("/{id}/cancel")
+    fun cancel(@PathVariable id: Long): ResponseEntity<Any> =
+        when (val result = inventoryService.cancel(id)) {
+            is CancelResult.Restored ->
+                ResponseEntity.ok(CancelResponse("CANCELED", result.roomCount))
+
+            CancelResult.AlreadyCanceled ->
+                ResponseEntity.ok(CancelResponse("ALREADY_CANCELED", null))
+
+            CancelResult.NotFound ->
+                ResponseEntity.status(HttpStatus.NOT_FOUND)
+                    .body(mapOf("message" to "예약 $id 이 없다"))
+        }
+
     /** `ReserveCommand` 의 `require` 가 던지는 것. 요청 자체가 틀렸으므로 400 이다. */
     @ExceptionHandler(IllegalArgumentException::class)
     fun onInvalidRequest(e: IllegalArgumentException): ResponseEntity<Any> =
@@ -78,3 +101,6 @@ data class CreateReservationRequest(
 data class CreateReservationResponse(val reservationId: Long)
 
 data class RejectedResponse(val unavailable: List<Unavailable>)
+
+/** [restoredRoomCount] 는 실제로 되돌린 객실 수. 이미 취소된 건이면 null 이다. */
+data class CancelResponse(val status: String, val restoredRoomCount: Int?)

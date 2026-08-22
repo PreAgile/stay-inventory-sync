@@ -74,6 +74,42 @@ class InventoryFixture(private val dataSource: DataSource) {
         )
     }
 
+    /**
+     * 상태를 지정해 예약을 직접 넣는다.
+     *
+     * 서비스로는 `CONFIRMED` 밖에 만들 수 없다. 복원이 **`CONFIRMED` 에서만**
+     * 일어난다는 비대칭을 증명하려면 나머지 여덟 상태를 만들 수단이 필요하다.
+     */
+    fun insertReservation(
+        roomTypeId: Long,
+        checkIn: LocalDate,
+        checkOut: LocalDate,
+        status: dev.preagile.stayinventory.domain.ReservationStatus,
+        roomCount: Int,
+    ): Long = dataSource.connection.use { conn ->
+        conn.exec(
+            """
+            INSERT INTO reservation
+                   (room_type_id, check_in, check_out, status, room_count,
+                    channel, channel_reservation_id, guest_name)
+            VALUES ($roomTypeId, DATE '$checkIn', DATE '$checkOut', '$status', $roomCount,
+                    'FIXTURE', 'fx-${'$'}{java.util.UUID.randomUUID()}', '픽스처손님')
+            """.trimIndent(),
+        )
+        conn.queryLong("SELECT max(id) FROM reservation")
+    }
+
+    /**
+     * `sold` 를 직접 맞춘다. 점유 예약을 이미 넣어 둔 뒤에만 쓴다 --
+     * 그렇지 않으면 `INV-2` 가 깨지고 훅이 그 테스트를 실패로 만든다.
+     */
+    fun forceSold(roomTypeId: Long, stayDate: LocalDate, sold: Int) = dataSource.connection.use {
+        it.exec(
+            "UPDATE daily_inventory SET sold = $sold " +
+                "WHERE room_type_id = $roomTypeId AND stay_date = DATE '$stayDate'",
+        )
+    }
+
     fun sold(roomTypeId: Long, stayDate: LocalDate): Int = dataSource.connection.use { conn ->
         conn.queryLong(
             "SELECT sold FROM daily_inventory " +
