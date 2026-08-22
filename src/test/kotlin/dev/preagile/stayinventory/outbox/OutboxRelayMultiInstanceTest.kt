@@ -53,6 +53,14 @@ class OutboxRelayMultiInstanceTest(
     /** 호출 횟수만 세는 어댑터. 인스턴스마다 따로 둔다. */
     class CountingAdapter(private val shared: SharedCounters) : ChannelAdapter {
         override val channel = "COUNTING"
+
+        // 이 스펙은 호출 횟수만 본다. 대사는 InventoryDiffTest 의 관심사다.
+        override fun currentInventory(
+            roomTypeId: Long,
+            from: java.time.LocalDate,
+            to: java.time.LocalDate,
+        ): Map<java.time.LocalDate, Int> = emptyMap()
+
         override fun push(idempotencyKey: Long, payload: String): ChannelSyncResult {
             shared.attempts.incrementAndGet()
             val first = shared.seen.putIfAbsent(idempotencyKey, true) == null
