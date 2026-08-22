@@ -64,6 +64,10 @@ class ArchitectureTest : FunSpec({
             "InventoryHold", "OutboxEvent", "InboundMessage", "ChannelPolicy",
         )
         production.size shouldBeGreaterThanOrEqual 8
+
+        // 아래 두 규칙의 대상 패키지가 실제로 비어 있지 않아야 규칙이 의미를 갖는다
+        production.any { it.packageName.endsWith("outbox.relay") } shouldBe true
+        production.any { it.packageName.endsWith("channel") } shouldBe true
     }
 
     test("엔티티에 연관 매핑이 없다 — dirty checking 우회 경로를 만들지 않는다") {
@@ -134,13 +138,49 @@ class ArchitectureTest : FunSpec({
             .check(production)
     }
 
+    test("릴레이는 JPA 를 모른다 — 영속성 컨텍스트가 닿지 않는다") {
+        // Given: outbox.relay 패키지
+        // Then: 영속성 컨텍스트가 여기까지 오면 dirty checking 도 따라온다.
+        // 릴레이가 실수로 도메인 엔티티를 바꿔 UPDATE 를 만드는 경로가 생기고,
+        // 그 UPDATE 는 InventoryService 에도 Repository 에도 정적 참조를 남기지 않는다.
+        //
+        // 그리고 B3(FOR UPDATE SKIP LOCKED)는 JPA 표준에 없다. 어차피 네이티브로
+        // 내려가야 하는 코드를 리포지토리 관례로 위장하지 않는다 (ADR-0008 결정 3)
+        noClasses()
+            .that().resideInAPackage("..stayinventory.outbox.relay..")
+            .should().dependOnClassesThat().resideInAnyPackage(
+                "..stayinventory.persistence..",
+                "jakarta.persistence..",
+                "org.springframework.data..",
+            )
+            .because("릴레이 경로에 JPA 가 닿으면 dirty checking 우회 경로가 다시 생긴다")
+            .check(production)
+    }
+
+    test("채널 어댑터는 리포지토리를 직접 참조하지 않는다") {
+        // Given: ChannelAdapter 구현체
+        // Then: 어댑터가 DB 를 읽기 시작하면 "발행 시점에 재고를 다시 조회하는"
+        // 경로가 생긴다. 그러면 재발행 사이에 낀 취소가 같은 이벤트를 다른 내용으로
+        // 내보내고, at-least-once 가 아니라 순서 없는 최신값 전송이 된다 (#4)
+        noClasses()
+            .that().resideInAPackage("..stayinventory.channel..")
+            .should().dependOnClassesThat().resideInAnyPackage(
+                "..stayinventory.persistence..",
+                "..stayinventory.inventory..",
+                "org.springframework.data..",
+            )
+            .because("어댑터는 받은 payload 만 보낸다. 다시 계산하지 않는다")
+            .check(production)
+    }
+
     // ── 아직 오지 않은 규칙 ────────────────────────────────────────────────
     test("대상이 생기면 규칙도 함께 와야 한다 — 미착수 패키지 목록") {
         // Given: docs/03-testing-strategy.md 가 규칙을 약속했지만 대상이 없는 패키지
-        val notYet = mapOf(
-            "..stayinventory.outbox.relay.." to "릴레이는 JPA Repository 에 의존하지 않는다 (#4 · #8)",
-            "..stayinventory.channel.." to "ChannelAdapter 는 Repository 를 직접 참조하지 않는다 (#4)",
-        )
+        // 비어 있다. 약속한 규칙 여섯이 전부 대상과 함께 들어왔다.
+        //
+        // 목록을 지우지 않고 남긴다 -- 다음에 "대상이 없어서 규칙을 미룬다" 는
+        // 판단을 할 때 여기에 적으면 되고, 적으면 잊을 수 없다.
+        val notYet = emptyMap<String, String>()
 
         // When: 각 패키지에 클래스가 생겼는지 본다
         val appeared = notYet.keys.filter { pattern ->
