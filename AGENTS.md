@@ -151,6 +151,21 @@ payload 는 **트리거로만** 쓰고, 조회 경로가 있으면 현재 상태
 절대 규칙 2 와 같은 성질이다. 지우기 쉬운 한 줄이 방어의 전부다.
 제거하면 테스트 `T8` 이 실패해야 한다. (ADR-0010)
 
+### 12. 엔티티 간 연관 매핑을 두지 않는다 — 참조는 ID 로만 갖는다
+
+```kotlin
+// ❌
+@ManyToOne(fetch = LAZY) val roomType: RoomType
+
+// ✅
+@Column(name = "room_type_id") val roomTypeId: Long
+```
+
+dirty checking 은 **정적 참조 없이 UPDATE 를 만든다.**
+연관을 타고 들어가 필드를 바꾸면 `InventoryService` 도 Repository 도 거치지 않는데
+쓰기가 일어나고, ArchUnit 의 "재고 변경은 `InventoryService` 를 통해서만" 규칙이 이를 잡지 못한다.
+연관 매핑을 두지 않으면 **그 경로 자체가 만들어지지 않는다.** (ADR-0008)
+
 ---
 
 ## 제안하지 말 것
@@ -167,6 +182,9 @@ payload 는 **트리거로만** 쓰고, 조회 경로가 있으면 현재 상태
 | 코루틴 도입 | ADR-0005 |
 | 가상 스레드 활성화 (`spring.threads.virtual.enabled`) | ADR-0006 |
 | pinning 회피 목적의 JDK 24/25 이관 | ADR-0006 (편익이 0이므로 비용만 남음) |
+| jOOQ / 순수 JdbcTemplate 전면 전환 | ADR-0008 (조건부 채택. 재검토 조건 4개 명시됨) |
+| R2DBC 전환 | ADR-0008 (트랜잭션이 사는 동안 커넥션 점유는 그대로 남는다), ADR-0006 |
+| 엔티티 연관 매핑 추가 (`@OneToMany`/`@ManyToOne`) | ADR-0008 (절대 규칙 9) |
 | Lincheck 등 모델 체킹 | ADR-0005 (검증 대상이 인메모리 자료구조라 적용 불가) |
 | Java 전환 | ADR-0005 |
 | Allocated inventory | ADR-0001 |
