@@ -1,0 +1,36 @@
+spring:
+  application:
+    name: stay-inventory-sync
+
+  datasource:
+    url: ${DB_URL:jdbc:postgresql://localhost:5432/stayinv}
+    username: ${DB_USER:stayinv}
+    password: ${DB_PASSWORD:stayinv}
+    hikari:
+      # 이 워크로드의 상한은 스레드가 아니라 커넥션 풀이다 (ADR-0006).
+      # 가상 스레드를 켜지 않는 근거가 이 숫자에 있으므로 명시적으로 둔다.
+      maximum-pool-size: 20
+
+  jpa:
+    # 스키마의 단일 진실 원천은 Flyway 다. Hibernate 가 테이블을 만들면
+    # 마이그레이션과 실제 스키마가 갈라지고, 그때 어느 쪽이 진실인지 판정할 수 없다.
+    hibernate:
+      ddl-auto: validate
+    open-in-view: false
+    properties:
+      hibernate:
+        jdbc:
+          # 다일 재고를 날짜마다 한 번씩 갱신한다. 배치가 없으면 왕복이 날짜 수만큼 늘어난다.
+          batch_size: 30
+        order_updates: true
+
+  flyway:
+    enabled: true
+    locations: classpath:db/migration
+    # 운영 스키마에 자동 baseline 을 만들지 않는다.
+    # 빈 DB 가 아닌데 조용히 통과하면 마이그레이션 이력이 어긋난 것을 못 잡는다.
+    baseline-on-migrate: false
+
+logging:
+  level:
+    root: INFO

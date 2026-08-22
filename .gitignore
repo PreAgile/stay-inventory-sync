@@ -1,5 +1,9 @@
 .gradle/
 build/
+# Kotlin 2.x 가 만드는 세션 디렉터리. 빌드 산출물이며 커밋 대상이 아니다.
+.kotlin/
+# 래퍼 jar 는 커밋한다. 없으면 CI 가 ./gradlew 를 실행할 수 없고,
+# ci.yml 의 프로브가 "프로젝트는 있는데 래퍼가 없다" 로 실패시킨다.
 !gradle/wrapper/gradle-wrapper.jar
 .idea/
 *.iml

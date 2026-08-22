@@ -273,12 +273,49 @@ H2는 사용하지 않는다. `SELECT FOR UPDATE`의 동작이 PostgreSQL과 달
 
 ## 6. 실행
 
+### 준비 — Gradle 은 **JDK 21 로 실행한다**
+
 ```bash
-docker compose up -d
+export JAVA_HOME=$(/usr/libexec/java_home -v 21)   # macOS
+```
+
+**`build.gradle.kts` 의 `jvmToolchain(21)` 은 이것을 대신하지 못한다.** 툴체인은
+컴파일에 쓰는 JDK 만 고르고, **Gradle 자신과 Kotlin 플러그인은 `JAVA_HOME` 의 JVM 에서
+돈다.** 상위 JDK(예: 25)에서는 Gradle 8.14 가 빌드 스크립트를 컴파일하다가 죽는다.
+
+그때 나오는 메시지가 이것뿐이다.
+
+```text
+* What went wrong:
+25.0.1
+```
+
+**원인을 한 글자도 알려주지 않는다.** 이 숫자만 나오면 JVM 버전 문제다.
+스크립트가 실행되기 전에 죽으므로 빌드 안에 가드를 둘 수 없다 — 그래서 문서에 적는다.
+CI 는 `actions/setup-java` 로 21 을 넣으므로 이 문제를 만나지 않는다.
+
+### 테스트
+
+```bash
 ./gradlew test
 ```
 
+**Docker 만 떠 있으면 된다. `docker compose` 는 필요하지 않다.**
+Testcontainers 가 실행마다 격리된 PostgreSQL 16 을 띄운다 — 테스트가 로컬 DB 상태에
+의존하면 "내 로컬에서는 통과" 가 생긴다.
+
 테스트가 전부 통과하면 이 프로젝트가 주장하는 것이 증명된 것이다.
+
+### 애플리케이션
+
+```bash
+docker compose up -d
+./gradlew bootRun
+```
+
+`docker-compose.yml` 은 **로컬에서 앱을 띄울 때만** 쓴다. 이미지는 `postgres:16-alpine` 로
+고정한다 — `inbound_message` 의 `UNIQUE NULLS NOT DISTINCT` 가 PostgreSQL 15 이상
+기능이므로 이 하한은 선택이 아니다. `PostgresCapabilityTest` 가 이 전제를 실행해서 확인한다.
 
 ---
 
