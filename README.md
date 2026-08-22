@@ -82,7 +82,7 @@ Channex(채널매니저) 기준으로 5XX 응답 시 최대 10회, 최종 시도
 
 ### 만든 것
 
-- 도메인 모델 5개 테이블 (`docs/01-domain-model.md`)
+- 도메인 모델 8개 테이블 (`docs/01-domain-model.md`)
 - 예약 생성 API — 다일 재고의 원자적 차감
 - 예약 취소 API — 재고 복원
 - Outbox 테이블 + 릴레이
@@ -105,7 +105,146 @@ Channex(채널매니저) 기준으로 5XX 응답 시 최대 10회, 최종 시도
 
 ---
 
-## 4. 기술 스택
+## 4. 데이터 모델
+
+테이블 **8개**다. 관계와 키만 먼저 본다 — 컬럼까지 있는 ERD 는
+[`docs/01-domain-model.md`](docs/01-domain-model.md) 에 있다.
+
+```mermaid
+erDiagram
+    PROPERTY        ||--o{ ROOM_TYPE       : "운영한다"
+    ROOM_TYPE       ||--o{ DAILY_INVENTORY : "날짜별 재고"
+    ROOM_TYPE       ||--o{ RESERVATION     : "예약 대상"
+    ROOM_TYPE       ||--o{ CHANNEL_POLICY  : "채널별 노출 규칙"
+    RESERVATION     ||--o{ INVENTORY_HOLD  : "확정 전 선점"
+    DAILY_INVENTORY ||--o{ INVENTORY_HOLD  : "그 날짜를 선점당한다"
+    DAILY_INVENTORY ||..o{ CHANNEL_POLICY  : "같은 격자. FK 아님"
+    RESERVATION     ||..o{ OUTBOX_EVENT    : "다형 참조. FK 아님"
+
+    PROPERTY {
+        bigint id PK
+    }
+    ROOM_TYPE {
+        bigint id PK
+        varchar booking_mode "즉시확정 | 승인형"
+    }
+    DAILY_INVENTORY {
+        bigint room_type_id PK "FK"
+        date stay_date PK
+        int physical_total "물리 객실 수"
+        int overbooking_limit "정책 한도. 기본 0"
+        int sold "확정 판매 수량"
+    }
+    RESERVATION {
+        bigint id PK
+        varchar channel UK "channel_reservation_id 와 복합"
+        varchar channel_reservation_id UK "중복 웹훅 최종 방어선"
+        varchar status "상태 9개"
+        int room_count "점유 객실 수. 기본 1"
+    }
+    INVENTORY_HOLD {
+        bigint id PK
+        timestamptz expires_at "만료 판정"
+        timestamptz released_at "NULL 이면 살아 있다"
+        int room_count
+    }
+    CHANNEL_POLICY {
+        bigint room_type_id PK "FK -> room_type.id"
+        date stay_date PK
+        varchar channel PK
+        varchar kind PK "CLOSED | CAP | OFFSET"
+        varchar source "OURS | CHANNEL — 누가 정했나"
+    }
+    OUTBOX_EVENT {
+        bigint id PK
+        varchar status "PENDING | PUBLISHED | DEAD"
+        timestamptz next_attempt_at "재시도 스케줄"
+    }
+    INBOUND_MESSAGE {
+        bigint id PK
+        varchar channel UK "external_id·sequence_key 와 복합"
+        varchar external_id UK "같은 알림의 재처리 차단"
+        varchar sequence_key UK
+        jsonb payload "받은 그대로. 해석하지 않는다"
+        varchar status "PENDING | PROCESSED | IGNORED | DEAD"
+    }
+```
+
+**실선(`--`)은 DB FK 로 강제되는 관계, 점선(`..`)은 키를 공유하거나 논리적으로만 이어진
+관계다.** `channel_policy` 를 `daily_inventory` 에 FK 로 묶으면 **재고 행이 아직 없는 미래
+날짜에 노출 상한을 미리 설정하는 것이 막힌다** — 캡형 운영에서 실제로 필요한 동작이다.
+
+### 이 그림에서 봐야 할 다섯 가지
+
+**① `total` 컬럼이 없다.** `physical_total` 과 `overbooking_limit` 두 개이고
+합계는 계산값이다. 하나로 합치면 지표 · 경고 · 되돌림 셋을 동시에 잃는다
+([ADR-0007](docs/adr/0007-overbooking-policy.md)).
+
+**② `sold` 는 최적화가 아니라 경합의 직렬화 지점이다.** 예약 테이블을 매번 집계하면
+"잔여 1개에 100명이 동시 요청"을 막을 자리가 없다. 카운터가 있는 행을 잠가야 직렬화된다.
+
+**③ 세 개의 `UNIQUE` 가 멱등성을 DB 에 맡긴다.** 애플리케이션이 아니라 제약이 판정한다.
+
+```text
+reservation      UNIQUE(channel, channel_reservation_id)          중복 웹훅
+inbound_message  UNIQUE NULLS NOT DISTINCT                        같은 알림 재처리
+                   (channel, external_id, sequence_key)
+channel_policy   PK(room_type_id, stay_date, channel, kind)       규칙 중복
+```
+
+`inbound_message` 의 `NULLS NOT DISTINCT` 가 빠지면 **제약이 아무것도 막지 못한다.**
+`sequence_key` 는 NULL 일 수 있고(순서키를 주지 않는 채널이 있다) PostgreSQL 에서
+기본적으로 **NULL 은 NULL 과 같지 않다.** 순서키를 주지 않는 채널에서만 멱등이 뚫리므로
+조용하다. `NULLS NOT DISTINCT` 는 PostgreSQL 15 이상이며, 이것이 스택 하한을 고정한다.
+
+**④ `INBOUND_MESSAGE` 에 선이 하나도 없는 것은 의도한 것이다.**
+`kind` 가 `BOOKING` 이면 `reservation` 을, `POLICY` 면 `channel_policy` 를 가리킨다 —
+**다른 테이블이고 개수도 다르다.**
+
+```text
+BOOKING  ->  reservation      0~1 건
+POLICY   ->  channel_policy   0~N 건
+             (room_type_id, stay_date, channel, kind) 에서 kind 별로 여러 행
+```
+
+컬럼 하나는 **다른 테이블도, 집합도** 가리킬 수 없다. 그리고 에코와 해석 실패는
+**끝까지 대상이 없는 것이 정상**이다. `payload` 는 받은 그대로 두고, 무엇을 가리키는지는
+해석의 산출물로 따로 둔다.
+
+> nullable FK 로 저장 자체는 가능하다. FK 는 값이 있을 때만 검사하므로
+> **"FK 를 걸면 저장할 수 없다"는 근거가 아니다.** 안 두는 이유는 위와 같다
+> (`docs/01-domain-model.md`).
+
+**⑤ `sequence_key` 는 NULL 일 수 있고, 그래서 `NULLS NOT DISTINCT` 가 필요하다.**
+PostgreSQL 에서 기본적으로 NULL 은 NULL 과 같지 않다. 빼면 순서키를 주지 않는 채널에서만
+멱등이 뚫리므로 **조용하다** — 순서키를 주는 채널로 테스트하면 통과한다.
+
+### 불변식
+
+이 테이블들이 지켜야 하는 것을 넷으로 적는다. 테스트가 실제로 검사하는 대상이다.
+
+**`total` 은 컬럼이 아니라 `physical_total + overbooking_limit` 계산값이다.**
+불변식 서술에는 `total` 을 쓰고, DB `CHECK` 와 마이그레이션에는 **실제 컬럼 두 개**를 쓴다.
+`CHECK (sold <= total)` 로 쓰면 첫 마이그레이션에서 실패한다.
+
+| | 내용 | 판정 |
+|---|---|---|
+| `INV-1` | `0 <= sold <= total` | DB `CHECK` — 제약에는 실제 컬럼 두 개를 쓴다 |
+| `INV-2` | `sold == SUM(점유 예약의 room_count)` | **상태만으로** 결정된다 |
+| `INV-3` | `check_in < check_out` | DB `CHECK` |
+| `INV-4` | `sold + SUM(유효 선점의 room_count) <= total` | **상태만으로는 부족하다** |
+
+`INV-2` 와 `INV-4` 의 차이가 이 모델에서 가장 자주 틀리는 지점이다.
+점유는 상태 하나로 결정되지만(`CONFIRMED` · `CHECKED_IN` · `CHECKED_OUT` · `TERMINATED`),
+**유효 선점은 상태에 더해 `expires_at > now() AND released_at IS NULL` 이 필요하다.**
+상태만 세면 만료된 선점까지 세어 잔여가 실제보다 적게 나온다.
+
+**JPA 연관 매핑은 두지 않는다.** 이 그림은 데이터의 모양이고, 코드에서 참조는 ID 값으로만
+한다 ([ADR-0008](docs/adr/0008-jpa-with-explicit-writes.md)).
+
+---
+
+## 5. 기술 스택
 
 ```
 Kotlin 2.x + Spring Boot 3.x + JDK 21
@@ -132,7 +271,7 @@ H2는 사용하지 않는다. `SELECT FOR UPDATE`의 동작이 PostgreSQL과 달
 
 ---
 
-## 5. 실행
+## 6. 실행
 
 ```bash
 docker compose up -d
@@ -143,7 +282,7 @@ docker compose up -d
 
 ---
 
-## 6. 문서
+## 7. 문서
 
 | 문서 | 내용 |
 |---|---|
@@ -160,7 +299,7 @@ docker compose up -d
 
 ---
 
-## 7. 참고자료
+## 8. 참고자료
 
 코드는 참조하지 않았다. 도메인 이해와 외부 스펙 확인 목적으로만 조사했다.
 
