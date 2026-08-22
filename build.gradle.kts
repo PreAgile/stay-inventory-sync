@@ -15,8 +15,11 @@ group = "dev.preagile"
 version = "0.1.0-SNAPSHOT"
 
 kotlin {
-    // 툴체인으로 고정한다. 로컬 JAVA_HOME 이 무엇이든 21 로 컴파일된다 —
-    // "내 로컬에서는 됐다" 를 없애는 쪽이 목적이다.
+    // 컴파일에 쓰는 JDK 를 21 로 고정한다. 로컬에 상위 JDK 가 있어도 산출물은 21 이다.
+    //
+    // 이것이 보장하지 않는 것: **Gradle 자신이 도는 JVM.**
+    // 툴체인은 컴파일러만 고르고, Gradle 과 Kotlin 플러그인은 JAVA_HOME 에서 돈다.
+    // 그래서 실행 JVM 은 settings.gradle.kts 가 따로 검사한다.
     jvmToolchain(21)
 }
 
@@ -42,6 +45,10 @@ dependencies {
     // Kotest — JUnit5 플랫폼 위에서 돈다. runner 가 없으면 스펙이 발견되지 않는다.
     testImplementation("io.kotest:kotest-runner-junit5:5.9.1")
     testImplementation("io.kotest:kotest-assertions-core:5.9.1")
+    // Kotest 로 Spring 컨텍스트 테스트를 쓰려면 SpringExtension 이 필요하다.
+    // 이것이 없으면 @SpringBootTest 가 붙어도 컨텍스트가 뜨지 않고 생성자 주입이 안 된다 —
+    // JUnit 으로 도망가지 않기 위한 의존이다 (AGENTS.md 테스트 규약).
+    testImplementation("io.kotest.extensions:kotest-extensions-spring:1.3.0")
 
     // Testcontainers — H2 를 쓰지 않는 이유가 FOR UPDATE 의 의미 차이다.
     // 락 검증이 성립해야 하므로 실제 PostgreSQL 을 띄운다.

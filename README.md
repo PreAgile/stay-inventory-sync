@@ -273,6 +273,27 @@ H2는 사용하지 않는다. `SELECT FOR UPDATE`의 동작이 PostgreSQL과 달
 
 ## 6. 실행
 
+### 준비 — Gradle 은 **JDK 21 로 실행한다**
+
+```bash
+export JAVA_HOME=$(/usr/libexec/java_home -v 21)   # macOS
+```
+
+**`build.gradle.kts` 의 `jvmToolchain(21)` 은 이것을 대신하지 못한다.** 툴체인은
+컴파일에 쓰는 JDK 만 고르고, **Gradle 자신과 Kotlin 플러그인은 `JAVA_HOME` 의 JVM 에서
+돈다.** 상위 JDK(예: 25)에서는 Gradle 8.14 가 빌드 스크립트를 컴파일하다가 죽는다.
+
+그때 나오는 메시지가 이것뿐이다.
+
+```text
+* What went wrong:
+25.0.1
+```
+
+**원인을 한 글자도 알려주지 않는다.** 이 숫자만 나오면 JVM 버전 문제다.
+스크립트가 실행되기 전에 죽으므로 빌드 안에 가드를 둘 수 없다 — 그래서 문서에 적는다.
+CI 는 `actions/setup-java` 로 21 을 넣으므로 이 문제를 만나지 않는다.
+
 ### 테스트
 
 ```bash
