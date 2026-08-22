@@ -164,6 +164,18 @@ CREATE INDEX idx_inventory_hold_active
 
 CREATE INDEX idx_inventory_hold_reservation ON inventory_hold (reservation_id);
 
+-- 같은 예약·같은 날짜에 활성 선점은 하나뿐이다.
+--
+-- 이 제약이 없으면 재시도된 선점 요청이나 동시 요청 두 건이 행을 둘 만들고,
+-- INV-4 의 유효 선점 합계가 room_count 를 두 번 센다 -- 3객실 예약이 6으로
+-- 읽혀 남은 재고를 실제보다 적게 판정한다. 조용한 기회손실이다.
+--
+-- 부분 인덱스인 이유: released_at 이 채워진 과거 선점은 이력으로 남아야 하고,
+-- 해제 후 같은 날짜를 다시 선점하는 것은 정상 경로다.
+CREATE UNIQUE INDEX uq_inventory_hold_one_active_per_stay_date
+    ON inventory_hold (reservation_id, stay_date)
+    WHERE released_at IS NULL;
+
 -- ── 6. outbox_event ──────────────────────────────────────────────────────────
 -- 나갈 통보 (ADR-0003). 도메인 트랜잭션 안에서 "보내야 한다는 사실" 을 같이 쓴다.
 CREATE TABLE outbox_event (

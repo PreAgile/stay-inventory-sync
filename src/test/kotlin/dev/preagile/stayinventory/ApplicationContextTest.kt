@@ -25,7 +25,10 @@ class ApplicationContextTest(
 ) : FunSpec({
 
     test("컨텍스트가 뜨고 컨테이너의 PostgreSQL 에 붙는다") {
+        // Given: 컨테이너가 뜬 상태에서 로딩된 애플리케이션 컨텍스트
+        // When: 주입된 DataSource 로 접속한다
         dataSource.connection.use { conn ->
+            // Then
             conn.metaData.databaseProductName shouldBe "PostgreSQL"
             conn.metaData.databaseMajorVersion shouldBeGreaterThanOrEqual 15
 
@@ -36,7 +39,9 @@ class ApplicationContextTest(
     }
 
     test("Flyway 가 V1 을 적용하고 이력에 성공으로 남긴다") {
+        // Given: 컨텍스트 로딩 시 Flyway 가 마이그레이션을 수행한 상태
         dataSource.connection.use { conn ->
+            // When: 이력 테이블을 읽는다
             conn.createStatement().use { st ->
                 st.executeQuery(
                     "SELECT version, success FROM flyway_schema_history ORDER BY installed_rank",

@@ -4,6 +4,7 @@ import io.kotest.core.spec.style.FunSpec
 import io.kotest.extensions.spring.SpringExtension
 import io.kotest.matchers.collections.shouldBeEmpty
 import io.kotest.matchers.collections.shouldContainExactly
+import io.kotest.matchers.shouldBe
 import org.springframework.boot.test.context.SpringBootTest
 import org.springframework.context.annotation.Import
 import java.io.File
@@ -45,10 +46,16 @@ class SchemaMatchesErdTest(
 
     data class ErdColumn(val name: String, val type: String, val isPk: Boolean)
 
-    val erd: Map<String, List<ErdColumn>> = run {
+    // 지연 평가한다. 스펙 생성 시점에 파싱하면 실패가 BeanCreationException 으로
+    // 감싸여 원인 문장이 묻힌다. 테스트 안에서 처음 읽히게 두면 테스트 실패로 드러난다.
+    val erd: Map<String, List<ErdColumn>> by lazy {
         val doc = File(repoRoot, "docs/01-domain-model.md").readText()
-        val block = Regex("```mermaid\\n(erDiagram.*?)```", RegexOption.DOT_MATCHES_ALL)
-            .find(doc)!!.groupValues[1]
+        // !! 를 쓰지 않는다. 펜스 표기가 바뀌면 NullPointerException 만 남고
+        // 원인이 드러나지 않는다. 게이트는 실패 이유가 문장으로 남아야 한다.
+        val match = requireNotNull(
+            Regex("```mermaid\\n(erDiagram.*?)```", RegexOption.DOT_MATCHES_ALL).find(doc),
+        ) { "docs/01-domain-model.md 에서 erDiagram 코드 블록을 찾지 못했다" }
+        val block = match.groupValues[1]
         Regex("^ {4}([A-Z_]+) \\{\\n(.*?)^ {4}\\}", setOf(RegexOption.DOT_MATCHES_ALL, RegexOption.MULTILINE))
             .findAll(block)
             .associate { m ->
@@ -71,8 +78,24 @@ class SchemaMatchesErdTest(
             }
         }
 
+    // ── ⓿ 게이트 자신을 먼저 검사한다 ──────────────────────────────────────
+    //
+    // 정규식이 한 테이블도 잡지 못하면 아래 검사들이 **빈 집합끼리 비교해서
+    // 통과한다.** 파싱 실패가 초록불이 되는 것이 이 게이트의 가장 나쁜 실패다.
+    // 그래서 파싱 결과에 기대치를 박는다.
+    test("게이트가 ERD 를 실제로 파싱했다 — 파싱 실패가 통과로 읽히지 않게 한다") {
+        // Given: ERD 블록을 파싱한 결과
+        // When / Then: 테이블 수와 각 테이블의 컬럼 수가 0 이 아니어야 한다
+        erd.keys.size shouldBe EXPECTED_TABLE_COUNT
+        erd.filterValues { it.isEmpty() }.keys.shouldBeEmpty()
+        // PK 마커를 하나도 못 읽었다면 키 검사가 무의미해진다
+        erd.filterValues { cols -> cols.none { it.isPk } }.keys.shouldBeEmpty()
+    }
+
     // ── ① 테이블 집합 ──────────────────────────────────────────────────────
     test("ERD 와 실제 스키마가 같은 테이블 집합을 말한다") {
+        // Given: ERD 파싱 결과
+        // When: information_schema 에서 실제 테이블을 읽는다
         val actual = query(
             """
             SELECT table_name FROM information_schema.tables
@@ -80,12 +103,15 @@ class SchemaMatchesErdTest(
             """.trimIndent(),
         ).map { it[0]!! }.toSet()
 
+        // Then: 양쪽 차이가 없어야 한다
         ((erd.keys - actual).map { "ERD 에만: $it" } +
             (actual - erd.keys).map { "스키마에만: $it" }).shouldBeEmpty()
     }
 
     // ── ② 컬럼 이름 ────────────────────────────────────────────────────────
     test("테이블마다 같은 컬럼 집합을 말한다") {
+        // Given: ERD 파싱 결과
+        // When: information_schema.columns 를 읽는다
         val actual = query(
             """
             SELECT table_name, column_name FROM information_schema.columns
@@ -93,6 +119,7 @@ class SchemaMatchesErdTest(
             """.trimIndent(),
         ).groupBy({ it[0]!! }, { it[1]!! }).mapValues { it.value.toSet() }
 
+        // Then: 테이블마다 컬럼 집합이 일치해야 한다
         erd.keys.intersect(actual.keys).flatMap { t ->
             val e = erd.getValue(t).map { it.name }.toSet()
             val a = actual.getValue(t)
@@ -102,6 +129,8 @@ class SchemaMatchesErdTest(
 
     // ── ③ 컬럼 타입 ────────────────────────────────────────────────────────
     test("테이블마다 같은 컬럼 타입을 말한다") {
+        // Given: ERD 파싱 결과와 표기 -> data_type 매핑
+        // When: information_schema.columns 의 data_type 을 읽는다
         val actual = query(
             """
             SELECT table_name, column_name, data_type FROM information_schema.columns
@@ -109,6 +138,7 @@ class SchemaMatchesErdTest(
             """.trimIndent(),
         ).associate { (t, c, d) -> "$t.$c" to d!! }
 
+        // Then: 매핑한 타입이 일치해야 한다
         erd.flatMap { (table, cols) ->
             cols.mapNotNull { col ->
                 val expected = typeMap[col.type]
@@ -121,6 +151,8 @@ class SchemaMatchesErdTest(
 
     // ── ④ 기본 키 ──────────────────────────────────────────────────────────
     test("테이블마다 같은 기본 키를 말한다") {
+        // Given: ERD 의 PK 마커
+        // When: table_constraints 에서 PRIMARY KEY 컬럼을 읽는다
         val actual = query(
             """
             SELECT tc.table_name, kcu.column_name
@@ -132,6 +164,7 @@ class SchemaMatchesErdTest(
             """.trimIndent(),
         ).groupBy({ it[0]!! }, { it[1]!! }).mapValues { it.value.toSet() }
 
+        // Then: PK 컬럼 집합이 일치해야 한다
         erd.keys.intersect(actual.keys).flatMap { t ->
             val e = erd.getValue(t).filter { it.isPk }.map { it.name }.toSet()
             val a = actual.getValue(t)
@@ -146,8 +179,12 @@ class SchemaMatchesErdTest(
         // pg_constraint 를 쓴다. information_schema 의 key_column_usage 와
         // constraint_column_usage 를 조인하면 복합 FK 에서 카테시안 곱이 생겨
         // 컬럼이 중복 나열된다 (3열 FK 가 9개로 불어난다).
+        // Given: 문서화된 FK 정책 (아래 목록)
+        // When: pg_constraint 에서 실제 FK 를 읽는다
         val actual = query(FK_QUERY)
             .map { (from, cols, to) -> "$from($cols) -> $to" }.sorted()
+
+        // Then: 목록과 정확히 일치해야 한다 — 빠진 것도 늘어난 것도 실패다
 
         actual shouldContainExactly listOf(
             // 선점은 예약과 같은 룸타입·수량이어야 한다. reservation_id 단독으로는
@@ -162,6 +199,8 @@ class SchemaMatchesErdTest(
     }
 
     test("의도적으로 없는 FK 가 생기지 않았다") {
+        // Given: 의도적으로 두지 않은 FK 목록
+        // When: 실제 FK 의 (from, to) 쌍을 읽는다
         val fkTables = query(FK_QUERY).map { "${it[0]} -> ${it[2]}" }.toSet()
 
         // channel_policy -> daily_inventory 를 걸면 재고 행이 아직 없는 미래 날짜에
@@ -169,6 +208,7 @@ class SchemaMatchesErdTest(
         //
         // outbox_event 와 inbound_message 는 다형 참조이거나 수신 시점에 대상이
         // 없으므로 FK 를 두지 않는다 (ADR-0003 · ADR-0009).
+        // Then: 그중 하나도 실제로 존재하지 않아야 한다
         listOf(
             "channel_policy -> daily_inventory",
             "outbox_event -> reservation",
@@ -182,6 +222,9 @@ class SchemaMatchesErdTest(
     override fun extensions() = listOf(SpringExtension)
 
     companion object {
+        /** ERD 가 말하는 테이블 수. 늘거나 줄면 이 숫자도 같이 고친다. */
+        private const val EXPECTED_TABLE_COUNT = 8
+
         /** (참조하는 테이블, 컬럼 목록, 참조되는 테이블). 복합 FK 도 한 행으로 나온다. */
         private const val FK_QUERY = """
             SELECT c.conrelid::regclass::text AS from_table,

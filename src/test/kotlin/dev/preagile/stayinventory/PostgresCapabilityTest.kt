@@ -33,13 +33,17 @@ class PostgresCapabilityTest : FunSpec({
         DriverManager.getConnection(postgres.jdbcUrl, postgres.username, postgres.password)
 
     test("서버 메이저 버전이 15 이상이다 — NULLS NOT DISTINCT 의 하한") {
+        // Given: postgres:16-alpine 컨테이너
+        // When: 접속해 서버 버전을 읽는다
         connect().use { conn ->
+            // Then
             val major = conn.metaData.databaseMajorVersion
             major shouldBeGreaterThanOrEqual 15
         }
     }
 
     test("기본 UNIQUE 는 NULL 이 섞인 중복을 막지 못한다 — 이것이 막으려는 결함이다") {
+        // Given: 평범한 UNIQUE (channel, external_id, sequence_key) 를 가진 표
         connect().use { conn ->
             conn.createStatement().use { st ->
                 st.execute(
@@ -52,11 +56,13 @@ class PostgresCapabilityTest : FunSpec({
                     )
                     """.trimIndent(),
                 )
+                // When: 순서키가 NULL 인 같은 행을 두 번 넣는다
                 val insert = "INSERT INTO loose_unique VALUES ('YANOLJA', 'BK-1', NULL)"
                 st.executeUpdate(insert)
                 // 같은 값을 다시 넣는데 통과한다. NULL = NULL 이 참이 아니기 때문이다.
                 st.executeUpdate(insert)
 
+                // Then: 둘 다 들어간다 — 제약이 아무것도 막지 않았다
                 st.executeQuery("SELECT count(*) FROM loose_unique").use { rs ->
                     rs.next()
                     rs.getInt(1) shouldBe 2
@@ -66,6 +72,7 @@ class PostgresCapabilityTest : FunSpec({
     }
 
     test("NULLS NOT DISTINCT 는 같은 중복을 막는다") {
+        // Given: UNIQUE NULLS NOT DISTINCT 를 가진 같은 모양의 표
         connect().use { conn ->
             conn.createStatement().use { st ->
                 st.execute(
@@ -78,6 +85,7 @@ class PostgresCapabilityTest : FunSpec({
                     )
                     """.trimIndent(),
                 )
+                // When: 같은 행을 두 번 넣는다
                 val insert = "INSERT INTO strict_unique VALUES ('YANOLJA', 'BK-1', NULL)"
                 st.executeUpdate(insert)
 
