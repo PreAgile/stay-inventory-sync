@@ -27,8 +27,9 @@ erDiagram
     DAILY_INVENTORY {
         bigint   room_type_id PK "FK"
         date     stay_date    PK
-        int      total        "판매 가능 총 수량"
-        int      sold         "확정 판매 수량"
+        int      physical_total    "물리 객실 수"
+        int      overbooking_limit "정책 한도. 기본 0 (ADR-0007)"
+        int      sold              "확정 판매 수량"
         timestamptz updated_at
     }
 
@@ -38,6 +39,7 @@ erDiagram
         date     check_in
         date     check_out
         varchar  status       "PENDING|CONFIRMED|CHECKED_IN|CHECKED_OUT|CANCELED"
+        int      room_count   "점유 객실 수. 기본 1 (A7)"
         varchar  channel      "DIRECT|CHANNEL_A|YANOLJA"
         varchar  channel_reservation_id UK "channel과 복합 유니크"
         varchar  guest_name
@@ -149,8 +151,10 @@ sold 라는 숫자        vs        실제로 그 날짜를 쓰는 예약 건수
 ```
 INV-1  모든 (room_type_id, stay_date)에 대해  0 <= sold <= total
 
+       total = physical_total + overbooking_limit          ← ADR-0007. 컬럼이 아니라 계산값
+
 INV-2  모든 (room_type_id, stay_date)에 대해
-       sold == COUNT(해당 날짜를 포함하고 재고를 점유 중인 예약)
+       sold == SUM(해당 날짜를 포함하고 재고를 점유 중인 예약의 room_count)
 
 INV-3  모든 CONFIRMED 예약에 대해 check_in < check_out
 ```
@@ -296,6 +300,75 @@ enum class ReservationStatus {
 `OCCUPYING` 에 없는 상태는 전부 점유가 아니다. **제외 목록을 따로 관리하지 않는다** —
 관리하면 상태를 추가할 때 두 목록 중 하나를 빼먹는다.
 
+### total 은 컬럼이 아니라 계산값이다
+
+`ADR-0007` 의 결과다. 재고 행은 숫자 셋을 들고 있다.
+
+| 컬럼 | 뜻 | 핵심 |
+|---|---|---|
+| `physical_total` | 물리 객실 수 | 거의 안 바뀐다 |
+| `overbooking_limit` | 정책이 허용한 초과 한도 | **기본값 0** |
+| `sold` | 확정 판매 수량 | 예약·취소마다 바뀐다 |
+
+```
+total = physical_total + overbooking_limit
+```
+
+`INV-1` 은 문자 그대로 유지된다. **시스템은 여전히 "정책이 허용한 선"을 한 칸도 넘지 않고,
+그 선이 어디인지만 정책이 정한다.** 넘을 수 있는 것은 의도치 않은 초과뿐이다.
+
+`overbooking_limit = 0` 이면 `total == physical_total` 이므로 현재 동작과 수학적으로 동일하다.
+두 값을 따로 두는 이유(지표·경고·되돌림)는 `ADR-0007` 에 있다.
+
+### 예약당 객실 수 — room_count
+
+`INV-2` 가 `COUNT` 가 아니라 `SUM(room_count)` 인 이유다.
+
+실제 예약은 `"디럭스 2개 3박"` 형태로 들어온다. **예약 1건이 객실 1개라는 보장이 없다.**
+`reservation.room_count` 를 두고 차감·복원·검증을 이 값 기준으로 한다 (`A7`).
+
+```
+차감    sold + room_count <= total
+복원    sold -= room_count
+검증    sold == SUM(점유 예약의 room_count)
+```
+
+**락 구조는 바뀌지 않는다.** 같은 날짜 행을 `stay_date` 오름차순으로 잠그고 더하는 숫자만 다르다.
+`ADR-0002` 의 정렬 규칙과 `T2` 가 그대로 유효하다.
+
+#### 왜 "다객실 예약은 범위 밖" 으로 두지 않았나
+
+그쪽이 문단 하나로 끝나 보인다. 그런데 **멱등 제약과 충돌한다.**
+
+`room_count` 가 없으면 `"예약번호 ABC123, 디럭스 2개"` 를 표현할 방법이 **예약 행 2개** 뿐이다.
+
+```
+reservation #1   channel=YANOLJA   channel_reservation_id=ABC123
+reservation #2   channel=YANOLJA   channel_reservation_id=ABC123   ← UNIQUE 위반
+```
+
+`UNIQUE(channel, channel_reservation_id)` 가 INSERT 를 거부한다.
+우회하려면 제약에 순번을 넣어야 하는데, 그러면 **중복 수신 방어가 뚫린다** —
+같은 알림이 두 번 왔을 때 순번만 다르게 매기면 통과한다.
+
+즉 범위 밖으로 두는 선택은 "다객실 예약을 안 다룬다"가 아니라
+**"다객실 예약이 오면 처리할 방법이 없다"** 이고, 다객실 예약은 반드시 온다.
+
+`room_count` 는 그 문제가 없다. 예약 1건, `room_count = 2`, 제약은 그대로다.
+**이 컬럼이 오히려 제약을 지킨다.**
+
+#### 부분 성공은 없다
+
+`"디럭스 2개 3박"` 은 `2 × 3 = 6` 칸을 **전부 확보하거나 전부 실패**한다.
+5칸이 남아도 예약은 성립하지 않는다.
+
+새로운 구조가 아니다 — 3박 예약이 세 날짜를 전부 확보해야 성립하는 것과 같은 논리이며,
+`1개 × d일` 격자가 `n개 × d일` 격자로 늘어난 것뿐이다.
+
+한 칸만 주는 선택(예약을 쪼개기)은 예약 1건이 2건이 되므로 위의 멱등 문제로 되돌아간다.
+
+`DEFAULT 1` 이 기존 개념을 특수 케이스로 흡수한다. **다객실이 예외가 아니라 일반형이 된다.**
+
 ---
 
 ## 재고 차감 알고리즘
@@ -304,9 +377,9 @@ enum class ReservationStatus {
 1. 예약 대상 날짜 목록 생성: [check_in, check_out)   ← 체크아웃 당일은 미포함
 2. 날짜를 오름차순 정렬                                ← 데드락 방지 (ADR-0002)
 3. 각 날짜 행을 SELECT ... FOR UPDATE 로 잠금
-4. 전 날짜에 대해 sold + 1 <= total 검증
+4. 전 날짜에 대해 sold + room_count <= total 검증     ← total = physical_total + overbooking_limit
 5. 하나라도 실패하면 전체 롤백
-6. 전부 통과하면 sold += 1
+6. 전부 통과하면 sold += room_count
 7. 동일 트랜잭션에서 reservation INSERT + outbox_event INSERT
 ```
 
