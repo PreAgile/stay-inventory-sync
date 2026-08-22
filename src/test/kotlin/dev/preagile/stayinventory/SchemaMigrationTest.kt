@@ -287,6 +287,85 @@ class SchemaMigrationTest(
         }
     }
 
+    test("선점은 예약과 다른 룸타입에 걸 수 없다 — reservation_id 단독 FK 로는 못 막는다") {
+        dataSource.connection.use { conn ->
+            conn.exec("INSERT INTO property (id, name) VALUES (10, 'P10')")
+            conn.exec(
+                """
+                INSERT INTO room_type (id, property_id, name, capacity)
+                VALUES (10, 10, 'A', 2), (11, 10, 'B', 2)
+                """.trimIndent(),
+            )
+            // 룸타입 11(B) 의 재고 행만 만든다
+            conn.exec(
+                """
+                INSERT INTO daily_inventory (room_type_id, stay_date, physical_total)
+                VALUES (11, '2026-03-01', 10)
+                """.trimIndent(),
+            )
+            // 예약은 룸타입 10(A) · 3객실
+            conn.exec(
+                """
+                INSERT INTO reservation
+                       (id, room_type_id, check_in, check_out, status, room_count,
+                        channel, channel_reservation_id, guest_name)
+                VALUES (910, 10, '2026-03-01', '2026-03-02', 'HELD', 3, 'DIRECT', 'R-X', 'G')
+                """.trimIndent(),
+            )
+
+            // 룸타입 11(B) 재고에 선점을 걸려는 시도. reservation_id 는 실재하므로
+            // 단독 FK 로는 통과한다 -- 그러면 INV-4 는 B 격자로 계산하는데
+            // 확정 시 차감은 A 격자로 가서 가용 재고를 잘못 약속한다.
+            conn.expectRejected(
+                "23503",
+                """
+                INSERT INTO inventory_hold (room_type_id, stay_date, reservation_id, room_count, expires_at)
+                VALUES (11, '2026-03-01', 910, 3, now() + interval '10 minutes')
+                """.trimIndent(),
+            )
+        }
+    }
+
+    test("선점 수량이 예약 수량과 다르면 거부된다 — INV-4 계산과 차감이 어긋난다") {
+        dataSource.connection.use { conn ->
+            conn.exec("INSERT INTO property (id, name) VALUES (11, 'P11')")
+            conn.exec("INSERT INTO room_type (id, property_id, name, capacity) VALUES (12, 11, 'A', 2)")
+            conn.exec(
+                """
+                INSERT INTO daily_inventory (room_type_id, stay_date, physical_total)
+                VALUES (12, '2026-03-01', 10)
+                """.trimIndent(),
+            )
+            conn.exec(
+                """
+                INSERT INTO reservation
+                       (id, room_type_id, check_in, check_out, status, room_count,
+                        channel, channel_reservation_id, guest_name)
+                VALUES (911, 12, '2026-03-01', '2026-03-02', 'HELD', 3, 'DIRECT', 'R-Y', 'G')
+                """.trimIndent(),
+            )
+
+            // 예약은 3객실인데 선점은 1객실. 선점 단계에서는 1만 잡아 두고
+            // 확정 시 3을 차감하면 2객실이 초과 판매된다.
+            conn.expectRejected(
+                "23503",
+                """
+                INSERT INTO inventory_hold (room_type_id, stay_date, reservation_id, room_count, expires_at)
+                VALUES (12, '2026-03-01', 911, 1, now() + interval '10 minutes')
+                """.trimIndent(),
+            )
+
+            // 같은 값이면 통과한다 — 제약이 정상 경로를 막지 않는지 확인한다
+            conn.exec(
+                """
+                INSERT INTO inventory_hold (room_type_id, stay_date, reservation_id, room_count, expires_at)
+                VALUES (12, '2026-03-01', 911, 3, now() + interval '10 minutes')
+                """.trimIndent(),
+            )
+            conn.count("SELECT count(*) FROM inventory_hold WHERE reservation_id = 911") shouldBe 1
+        }
+    }
+
     test("유효 선점 부분 인덱스가 released_at IS NULL 조건으로 존재한다") {
         dataSource.connection.use { conn ->
             // 인덱스 정의에서 조건이 사라지면 해제된 선점까지 인덱스에 남는다.

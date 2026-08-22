@@ -93,6 +93,12 @@ CREATE TABLE reservation (
     CONSTRAINT reservation_channel_id_unique
         UNIQUE (channel, channel_reservation_id),
 
+    -- inventory_hold 의 복합 FK 가 참조할 대상. 데이터 유일성을 위한 것이 아니라
+    -- (id 가 이미 PK 다) 선점이 예약과 같은 룸타입·수량을 갖도록 묶기 위한 것이다.
+    -- 이것이 없으면 룸타입 A 예약에 룸타입 B 재고를 선점할 수 있다.
+    CONSTRAINT reservation_hold_target_unique
+        UNIQUE (id, room_type_id, room_count),
+
     -- INV-3
     CONSTRAINT reservation_stay_range_valid CHECK (check_in < check_out),
     -- room_count 가 음수면 INV-4 를 통과하면서 INV-1 을 깬다.
@@ -117,7 +123,9 @@ CREATE TABLE inventory_hold (
     room_type_id   BIGINT      NOT NULL,
     stay_date      DATE        NOT NULL,
     -- 다일 선점을 묶는 키를 겸한다. 날짜마다 한 행이고 예약 하나에 여러 행이 달린다.
-    reservation_id BIGINT      NOT NULL REFERENCES reservation (id),
+    -- 단독 FK 를 두지 않는다. 아래 복합 FK 가 예약의 존재와 룸타입·수량 일치를
+    -- 함께 보장하므로 중복이다.
+    reservation_id BIGINT      NOT NULL,
     -- reservation.room_count 와 같은 값. INV-4 증명의 전제다.
     room_count     INT         NOT NULL,
 
@@ -132,6 +140,19 @@ CREATE TABLE inventory_hold (
     CONSTRAINT inventory_hold_daily_inventory_fk
         FOREIGN KEY (room_type_id, stay_date)
         REFERENCES daily_inventory (room_type_id, stay_date),
+
+    -- reservation_id 만 참조하면 예약의 **존재**만 보장된다. 그 예약이 같은
+    -- 룸타입인지, 같은 수량인지는 보장되지 않는다. 그러면 룸타입 A 예약에
+    -- 룸타입 B 재고를 선점할 수 있고, INV-4 는 B 격자로 계산하는데 확정 시
+    -- 차감은 A 격자로 간다 -- 가용 재고를 잘못 약속하는 구조가 된다.
+    --
+    -- 세 값을 한 제약으로 묶는다. room_count 가 예약과 다른 선점도 같이 막힌다.
+    -- room_count 를 여기서 지우고 조인으로 읽는 안도 있지만, 유효 선점 조회가
+    -- 이 프로젝트에서 가장 잦은 읽기이므로 비정규화를 유지하고 DB 가 일치를 강제한다.
+    CONSTRAINT inventory_hold_reservation_match_fk
+        FOREIGN KEY (reservation_id, room_type_id, room_count)
+        REFERENCES reservation (id, room_type_id, room_count),
+
     CONSTRAINT inventory_hold_room_count_positive CHECK (room_count > 0)
 );
 

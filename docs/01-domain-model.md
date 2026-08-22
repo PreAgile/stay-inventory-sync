@@ -149,10 +149,32 @@ erDiagram
 | 선 | DB 가 강제하는가 |
 |---|---|
 | `PROPERTY -> ROOM_TYPE` · `ROOM_TYPE -> DAILY_INVENTORY` · `ROOM_TYPE -> RESERVATION` | 예 — FK |
-| `RESERVATION -> INVENTORY_HOLD` · `DAILY_INVENTORY -> INVENTORY_HOLD` | 예 — FK 둘 (`#2`) |
+| `RESERVATION -> INVENTORY_HOLD` | 예 — **복합 FK** `(reservation_id, room_type_id, room_count)` |
+| `DAILY_INVENTORY -> INVENTORY_HOLD` | 예 — FK `(room_type_id, stay_date)` |
 | `RESERVATION -> OUTBOX_EVENT` | **아니오** — `aggregate_id` 는 타입이 섞이는 다형 참조다 |
 | `ROOM_TYPE -> CHANNEL_POLICY` | 예 — FK (`room_type_id -> room_type.id`) |
 | `DAILY_INVENTORY -> CHANNEL_POLICY` | **아니오** — `(room_type_id, stay_date)` 격자를 공유할 뿐이다 |
+
+#### 선점의 FK 는 왜 복합인가
+
+`reservation_id` 만 참조하면 **예약의 존재만 보장된다.** 그 예약이 같은 룸타입인지,
+같은 수량인지는 보장되지 않는다. 그러면 이런 상태가 저장된다.
+
+```text
+예약     룸타입 A · 3객실
+선점     룸타입 B · 1객실     <- reservation_id 는 실재하므로 통과한다
+```
+
+**INV-4 는 B 격자로 계산하는데 확정 시 차감은 A 격자로 간다.** 가용 재고를 잘못
+약속하는 구조이고, 오버부킹보다 조용하다 — 두 격자 각각은 자기 기준으로 정합해 보인다.
+
+그래서 세 값을 한 제약으로 묶는다. `reservation` 에 `UNIQUE (id, room_type_id, room_count)`
+를 두고 선점이 그것을 참조한다. 데이터 유일성을 위한 UNIQUE 가 아니라 — `id` 가 이미
+PK 다 — **복합 FK 의 참조 대상을 만들기 위한 것**이다.
+
+> `inventory_hold.room_count` 를 지우고 예약에서 조인해 읽는 안도 있다. 중복 자체가
+> 사라지므로 더 깔끔하지만, **유효 선점 조회가 이 프로젝트에서 가장 잦은 읽기**여서
+> 비정규화를 유지하고 DB 가 일치를 강제하는 쪽을 택했다.
 
 `DAILY_INVENTORY -> CHANNEL_POLICY` 에 FK 를 걸면 **재고 행이 아직 없는 미래 날짜에
 노출 상한을 미리 설정하는 것이 막힌다.** 캡형 운영에서 실제로 필요한 동작이므로
