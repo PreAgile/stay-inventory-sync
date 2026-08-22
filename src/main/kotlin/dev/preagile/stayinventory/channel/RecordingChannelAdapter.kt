@@ -54,6 +54,7 @@ class RecordingChannelAdapter : ChannelAdapter {
         channelState.clear()
         silentlyDropped.clear()
         caps.clear()
+        snapshotCounter.set(0)
         forcedResult = null
     }
 
@@ -129,6 +130,30 @@ class RecordingChannelAdapter : ChannelAdapter {
 
     fun capFor(channel: String, roomTypeId: Long, stayDate: java.time.LocalDate): Int? =
         caps[Triple(channel, roomTypeId, stayDate)]
+
+    private val snapshotCounter = AtomicInteger()
+
+    /** 재동기화로 들어온 절대값 반영 횟수. `#23` 이 이 숫자를 본다. */
+    val snapshots: Int get() = snapshotCounter.get()
+
+    override fun pushSnapshot(
+        roomTypeId: Long,
+        stayDate: java.time.LocalDate,
+        remaining: Int,
+    ): ChannelSyncResult {
+        attemptCounter.incrementAndGet()
+        forcedResult?.let { return it }
+
+        snapshotCounter.incrementAndGet()
+        // 조용한 누락 설정은 여기에도 적용한다. 재동기화조차 통과하지 못하는
+        // 채널이면 그것은 리포트(#6)에 계속 남아야 한다
+        val key = roomTypeId to stayDate
+        if (key in silentlyDropped) return ChannelSyncResult.Success()
+
+        // 멱등키가 없으므로 **매번 적용된다.** 그것이 재동기화의 정의다
+        channelState[key] = remaining
+        return ChannelSyncResult.Success()
+    }
 
     override fun pushPolicy(idempotencyKey: Long, payload: String): ChannelSyncResult {
         attemptCounter.incrementAndGet()

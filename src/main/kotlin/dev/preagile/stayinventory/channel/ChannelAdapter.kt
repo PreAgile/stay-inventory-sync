@@ -29,6 +29,27 @@ interface ChannelAdapter {
     fun pushPolicy(idempotencyKey: Long, payload: String): ChannelSyncResult
 
     /**
+     * 지금 이 순간의 재고를 **절대값으로** 밀어넣는다. 정기 재동기화(`#23`)가 쓴다.
+     *
+     * `push` 와 성질이 다르다.
+     *
+     * | | `push` | `pushSnapshot` |
+     * |---|---|---|
+     * | 무엇을 보내나 | **사건 발생 시점**의 값 | **지금**의 값 |
+     * | 멱등키 | `outbox_event.id` | 없다 |
+     * | 재전송하면 | 흡수된다 | **다시 적용된다** |
+     *
+     * 마지막 줄이 이 메서드의 존재 이유다. 재동기화는 흡수되면 안 된다 --
+     * 낡은 값이 채널에 남아 있는 상태를 고치는 것이 목적이므로, 같은 값을
+     * 여러 번 보내는 것이 정상이고 매번 적용돼야 한다.
+     *
+     * 그래서 **멱등키를 받지 않는다.** 받으면 두 번째 재동기화가 흡수되어
+     * 아무 일도 하지 않고, 그 사실이 조용하다.
+     */
+    fun pushSnapshot(roomTypeId: Long, stayDate: java.time.LocalDate, remaining: Int):
+        ChannelSyncResult
+
+    /**
      * 채널이 **지금 들고 있는** 재고를 읽어 온다. 대사(#6)가 쓴다.
      *
      * `push` 와 방향이 반대이고 성질도 반대다 -- `push` 는 "우리가 아는 값을
