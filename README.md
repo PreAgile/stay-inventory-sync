@@ -197,9 +197,15 @@ channel_policy   PK(room_type_id, stay_date, channel, kind)       규칙 중복
 기본적으로 **NULL 은 NULL 과 같지 않다.** 순서키를 주지 않는 채널에서만 멱등이 뚫리므로
 조용하다. `NULLS NOT DISTINCT` 는 PostgreSQL 15 이상이며, 이것이 스택 하한을 고정한다.
 
-**④ `INBOUND_MESSAGE` 에 선이 하나도 없는 것은 의도한 것이다.** 받은 시점에는 이 알림이
-어느 예약을 가리키는지 모른다 — `payload` 를 해석해야 알 수 있고 해석은 실패할 수 있다.
-FK 를 걸면 **해석에 실패한 알림을 저장할 수 없게 되고, 받은 사실 자체가 사라진다.**
+**④ `INBOUND_MESSAGE` 에 선이 하나도 없는 것은 의도한 것이다.**
+`kind` 가 `BOOKING` 이면 예약을, `POLICY` 면 `(룸타입, 날짜, 채널)` 을 가리킨다 —
+**참조 대상이 하나가 아니라서** 컬럼 하나로 묶을 수 없다. 그리고 에코와 해석 실패는
+**끝까지 대상이 없는 것이 정상**이다. `payload` 는 받은 그대로 두고, 무엇을 가리키는지는
+해석의 산출물로 따로 둔다.
+
+> nullable FK 로 저장 자체는 가능하다. FK 는 값이 있을 때만 검사하므로
+> "FK 를 걸면 저장할 수 없다"는 근거가 아니다. 안 두는 이유는 위 셋이다
+> (`docs/01-domain-model.md`).
 
 **⑤ `sequence_key` 는 NULL 일 수 있고, 그래서 `NULLS NOT DISTINCT` 가 필요하다.**
 PostgreSQL 에서 기본적으로 NULL 은 NULL 과 같지 않다. 빼면 순서키를 주지 않는 채널에서만
@@ -209,9 +215,13 @@ PostgreSQL 에서 기본적으로 NULL 은 NULL 과 같지 않다. 빼면 순서
 
 이 테이블들이 지켜야 하는 것을 넷으로 적는다. 테스트가 실제로 검사하는 대상이다.
 
+**`total` 은 컬럼이 아니라 `physical_total + overbooking_limit` 계산값이다.**
+불변식 서술에는 `total` 을 쓰고, DB `CHECK` 와 마이그레이션에는 **실제 컬럼 두 개**를 쓴다.
+`CHECK (sold <= total)` 로 쓰면 첫 마이그레이션에서 실패한다.
+
 | | 내용 | 판정 |
 |---|---|---|
-| `INV-1` | `0 <= sold <= physical_total + overbooking_limit` | DB `CHECK` |
+| `INV-1` | `0 <= sold <= total` | DB `CHECK` — 제약에는 실제 컬럼 두 개를 쓴다 |
 | `INV-2` | `sold == SUM(점유 예약의 room_count)` | **상태만으로** 결정된다 |
 | `INV-3` | `check_in < check_out` | DB `CHECK` |
 | `INV-4` | `sold + SUM(유효 선점의 room_count) <= total` | **상태만으로는 부족하다** |
