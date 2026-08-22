@@ -1,5 +1,6 @@
 package dev.preagile.stayinventory
 
+import dev.preagile.stayinventory.support.DirectRowSpec
 import io.kotest.core.spec.style.FunSpec
 import io.kotest.extensions.spring.SpringExtension
 import io.kotest.matchers.collections.shouldContainExactly
@@ -55,44 +56,12 @@ class SchemaMigrationTest(
         }
     }
 
-    // 테스트 종료 시 불변식을 검증한다 (테스트 규약).
+    // 테스트 종료 시 불변식을 검증하는 코드는 여기에 없다.
     //
-    // 이 스펙은 제약 위반을 시도한다. 위반이 **부분적으로 성공한** 경우 —
-    // 예를 들어 제약이 느슨해져 일부만 막혔을 때 — 단언은 통과하는데 데이터는
-    // 깨져 있을 수 있다. 그것을 잡는 자리다.
+    // 공용 훅(InvariantHook)이 두 엔진 모두에서 부른다. 스펙마다 SQL 을 들고 있으면
+    // 스펙이 늘 때마다 복사되거나 조용히 빠지고, 빠져도 초록불은 그대로 나온다.
     //
-    // INV-2 는 여기서 검사하지 않는다. INV-2 는 "sold 가 점유 예약의 합과 같다" 로,
-    // **도메인 연산을 거친 뒤** 성립하는 등식이다. 이 스펙은 스키마를 시험하려고
-    // 행을 직접 넣으므로(예약 없이 sold 만 있는 재고 행) 성립할 이유가 없다.
-    // INV-2 는 차감·복원 테스트(T1~T6)가 검증한다.
-    afterTest {
-        dataSource.connection.use { conn ->
-            // INV-1 — DB CHECK 와 중복이지만, 제약이 사라진 경우를 여기서도 잡는다
-            conn.count(
-                """
-                SELECT count(*) FROM daily_inventory
-                 WHERE sold < 0 OR sold > physical_total + overbooking_limit
-                """.trimIndent(),
-            ) shouldBe 0
-
-            // INV-3
-            conn.count("SELECT count(*) FROM reservation WHERE check_in >= check_out") shouldBe 0
-
-            // INV-4 — 과선점 금지. 유효 선점은 세 조건을 모두 만족해야 한다.
-            conn.count(
-                """
-                SELECT count(*) FROM daily_inventory di
-                 WHERE di.sold + COALESCE((
-                           SELECT SUM(h.room_count) FROM inventory_hold h
-                            WHERE h.room_type_id = di.room_type_id
-                              AND h.stay_date    = di.stay_date
-                              AND h.expires_at   > now()
-                              AND h.released_at IS NULL
-                       ), 0) > di.physical_total + di.overbooking_limit
-                """.trimIndent(),
-            ) shouldBe 0
-        }
-    }
+    // 이 스펙은 INV-2 를 면제받는다. 클래스 본문의 DirectRowSpec 구현이 그 선언이다.
 
     // ── 스키마 형태 ────────────────────────────────────────────────────────
     test("테이블 8개가 정확히 이 이름으로 존재한다") {
@@ -478,6 +447,14 @@ class SchemaMigrationTest(
             hasPartial shouldBe 1
         }
     }
-}) {
+}), DirectRowSpec {
     override fun extensions() = listOf(SpringExtension)
+
+    /**
+     * 이 스펙은 스키마를 시험하려고 **도메인 연산 없이 행을 직접 넣는다.**
+     * 예약 없이 `sold` 만 있는 재고 행을 만들므로, 카운터와 예약 사실을 대조하는
+     * `INV-2` 가 성립할 이유가 없다. `INV-1` · `INV-3` · `INV-4` 는 그대로 받는다.
+     */
+    override val inv2ExemptionReason: String =
+        "스키마 제약을 시험하려고 도메인 연산 없이 행을 직접 넣는다"
 }
