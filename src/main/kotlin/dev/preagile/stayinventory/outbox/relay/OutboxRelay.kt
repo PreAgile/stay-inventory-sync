@@ -117,7 +117,11 @@ class OutboxRelay(
                             "재시도 소진으로 DEAD: id={} retryCount={} reason={}",
                             event.id, event.retryCount, result.reason,
                         )
-                        markDead(event.id)
+                        // 마지막 실패도 센다. status 만 바꾸면 행은 DEAD 인데
+                        // retry_count 는 5 로 남아, "retry_count > 5 면 DEAD" 라는
+                        // 계약과 /ops/outbox/dead 가 보여 주는 실패 횟수가 어긋난다.
+                        // 운영자가 그 숫자를 보고 "아직 여유가 있는데 왜 죽었나" 를 묻게 된다.
+                        markDead(event.id, countAsFailure = true)
                         report.copy(dead = report.dead + 1)
                     } else {
                         scheduleRetry(event, now.plus(backoffFor(event.retryCount)))
@@ -263,8 +267,20 @@ class OutboxRelay(
         jdbc.update("UPDATE outbox_event SET status = 'SUPERSEDED' WHERE id = ?", id)
     }
 
-    fun markDead(id: Long) {
-        jdbc.update("UPDATE outbox_event SET status = 'DEAD' WHERE id = ?", id)
+    /**
+     * 영구 실패로 보낸다.
+     *
+     * @param countAsFailure 마지막 시도를 `retry_count` 에 반영할지.
+     *   **소진으로 죽을 때만 참이다.** `Permanent`(4xx)는 한 번의 응답으로 판정한
+     *   것이라 재시도 예산과 무관하고, 함께 올리면 "다섯 번 실패했다" 로 읽힌다.
+     */
+    fun markDead(id: Long, countAsFailure: Boolean = false) {
+        val increment = if (countAsFailure) 1 else 0
+        jdbc.update(
+            "UPDATE outbox_event SET status = 'DEAD', retry_count = retry_count + ? WHERE id = ?",
+            increment,
+            id,
+        )
     }
 
     /** 재시도 횟수에 대응하는 대기 시간. 마지막 값에서 멈춘다. */

@@ -6,6 +6,7 @@ import dev.preagile.stayinventory.channel.RecordingChannelAdapter
 import dev.preagile.stayinventory.inventory.InventoryFixture
 import dev.preagile.stayinventory.inventory.InventoryService
 import dev.preagile.stayinventory.inventory.ReserveCommand
+import dev.preagile.stayinventory.inventory.runConcurrentlyOrFail
 import dev.preagile.stayinventory.outbox.relay.OutboxRelay
 import io.kotest.core.spec.style.FunSpec
 import io.kotest.extensions.spring.SpringExtension
@@ -74,11 +75,17 @@ class OutboxDlqTest(
         )
     }
 
-    fun statusOf(id: Long): String =
-        jdbc.queryForObject("SELECT status FROM outbox_event WHERE id = ?", String::class.java, id)!!
+    fun statusOf(id: Long): String = requireNotNull(
+        jdbc.queryForObject("SELECT status FROM outbox_event WHERE id = ?", String::class.java, id),
+    ) { "outbox_event $id 이 없다" }
 
-    fun singleEventId(): Long =
-        jdbc.queryForObject("SELECT id FROM outbox_event LIMIT 1", Long::class.java)!!
+    fun retryCountOf(id: Long): Int = requireNotNull(
+        jdbc.queryForObject("SELECT retry_count FROM outbox_event WHERE id = ?", Int::class.java, id),
+    ) { "outbox_event $id 이 없다" }
+
+    fun singleEventId(): Long = requireNotNull(
+        jdbc.queryForObject("SELECT id FROM outbox_event LIMIT 1", Long::class.java),
+    ) { "통보가 하나도 만들어지지 않았다" }
 
     /**
      * 실패를 [times] 번 반복하고 **끝난 시각을 돌려준다.**
@@ -110,20 +117,41 @@ class OutboxDlqTest(
         // Then: 무한 재시도를 두면 그 이벤트가 영원히 큐에 남아 큐 길이가
         // 지표로서 의미를 잃는다
         statusOf(eventId) shouldBe "DEAD"
+
+        // 마지막 실패도 세어져 있어야 한다. status 만 바꾸면 "retry_count > 5 면
+        // DEAD" 라는 계약과 목록이 보여 주는 숫자가 어긋나고, 운영자가
+        // "아직 여유가 있는데 왜 죽었나" 를 묻게 된다
+        retryCountOf(eventId) shouldBe OutboxRelay.MAX_RETRIES + 1
     }
 
-    test("소진 직전까지는 살아 있다 — 한 번 실패했다고 죽지 않는다") {
-        // Given / When
+    test("영구 실패는 재시도 예산을 쓰지 않는다 — 한 번의 응답으로 판정한 것이다") {
+        // Given: 4xx 를 주는 채널
         val roomTypeId = fixture.seedGrid(march1, days = 2, physicalTotal = 10)
         reserve(roomTypeId)
         val eventId = singleEventId()
+
+        // When
+        adapter.forcedResult = ChannelSyncResult.Permanent("400 잘못된 룸타입")
+        relay.drain()
+
+        // Then: 소진과 영구 실패는 다른 사건이다. 함께 올리면 목록에서
+        // "다섯 번 실패했다" 로 읽혀 원인 추적이 어긋난다
+        statusOf(eventId) shouldBe "DEAD"
+        retryCountOf(eventId) shouldBe 0
+    }
+
+    test("소진 직전까지는 살아 있다 — 한 번 실패했다고 죽지 않는다") {
+        // Given: 통보 하나
+        val roomTypeId = fixture.seedGrid(march1, days = 2, physicalTotal = 10)
+        reserve(roomTypeId)
+        val eventId = singleEventId()
+
+        // When: 소진 한계까지만 실패한다
         failTimes(OutboxRelay.MAX_RETRIES, ChannelSyncResult.Retryable("502"))
 
         // Then
         statusOf(eventId) shouldBe "PENDING"
-        jdbc.queryForObject(
-            "SELECT retry_count FROM outbox_event WHERE id = ?", Int::class.java, eventId,
-        ) shouldBe OutboxRelay.MAX_RETRIES
+        retryCountOf(eventId) shouldBe OutboxRelay.MAX_RETRIES
     }
 
     test("레이트 리밋은 아무리 반복돼도 DEAD 로 가지 않는다") {
@@ -138,9 +166,7 @@ class OutboxDlqTest(
         // Then: 429 는 실패가 아니다. 여기서 죽으면 **정상 채널의 정상 이벤트가**
         // 사장님이 예약을 많이 받았다는 이유로 사라진다
         statusOf(eventId) shouldBe "PENDING"
-        jdbc.queryForObject(
-            "SELECT retry_count FROM outbox_event WHERE id = ?", Int::class.java, eventId,
-        ) shouldBe 0
+        retryCountOf(eventId) shouldBe 0
     }
 
     test("리밋과 실패가 섞여도 실패만 센다") {
@@ -154,9 +180,7 @@ class OutboxDlqTest(
 
         // Then: 리밋 10회가 예산을 갉아먹었다면 여기서 이미 죽었을 것이다
         statusOf(eventId) shouldBe "PENDING"
-        jdbc.queryForObject(
-            "SELECT retry_count FROM outbox_event WHERE id = ?", Int::class.java, eventId,
-        ) shouldBe 1
+        retryCountOf(eventId) shouldBe 1
     }
 
     // ── 운영 API ──────────────────────────────────────────────────────────
@@ -194,9 +218,7 @@ class OutboxDlqTest(
         // 재투입이 사실상 아무 일도 하지 않는다
         response.status shouldBe 200
         statusOf(eventId) shouldBe "PENDING"
-        jdbc.queryForObject(
-            "SELECT retry_count FROM outbox_event WHERE id = ?", Int::class.java, eventId,
-        ) shouldBe 0
+        retryCountOf(eventId) shouldBe 0
 
         // 되살아난 이벤트는 실제로 다시 발행된다
         adapter.reset()
@@ -226,9 +248,11 @@ class OutboxDlqTest(
         relay.drain()
         statusOf(eventId) shouldBe "PUBLISHED"
 
-        // When / Then
-        mockMvc.perform(post("/ops/outbox/$eventId/retry"))
-            .andReturn().response.status shouldBe 409
+        // When: 되살리려 한다
+        val response = mockMvc.perform(post("/ops/outbox/$eventId/retry")).andReturn().response
+
+        // Then: 이미 나간 통보가 낡은 값으로 다시 나가는 것을 막는다
+        response.status shouldBe 409
     }
 
     test("두 운영자가 동시에 눌러도 한 번만 재투입된다") {
@@ -238,14 +262,25 @@ class OutboxDlqTest(
         val eventId = singleEventId()
         failTimes(OutboxRelay.MAX_RETRIES + 1, ChannelSyncResult.Retryable("502"))
 
-        // When: 두 번 연속 누른다
-        val first = mockMvc.perform(post("/ops/outbox/$eventId/retry")).andReturn().response.status
-        val second = mockMvc.perform(post("/ops/outbox/$eventId/retry")).andReturn().response.status
+        // When: 두 요청을 **실제로 동시에** 출발시킨다.
+        //
+        // 순차로 두 번 부르면 "이미 옮겨진 것을 또 옮기지 않는다" 만 증명된다.
+        // 그것은 조건부 UPDATE 가 아니라 상태 비교로도 통과하는 성질이고,
+        // 이 테스트가 지키려는 것은 **읽기와 쓰기 사이가 열리지 않는다**는 쪽이다
+        val statuses = java.util.concurrent.ConcurrentLinkedQueue<Int>()
+        runConcurrentlyOrFail(2) {
+            statuses += mockMvc.perform(post("/ops/outbox/$eventId/retry"))
+                .andReturn().response.status
+        }
 
-        // Then: 조건부 UPDATE 의 rowcount 가 판정한다. 상태를 읽고 비교하면
-        // 읽기와 쓰기 사이가 열려 둘 다 통과한다
-        first shouldBe 200
-        second shouldBe 409
+        // Then: 정확히 하나만 성공한다
+        statuses.count { it == 200 } shouldBe 1
+        statuses.count { it == 409 } shouldBe 1
+
+        // 그리고 재투입은 한 번만 일어났다 -- 둘 다 통과했다면 예산이 두 번
+        // 초기화될 뿐 결과가 같아 보이므로, 상태와 예산을 함께 확인한다
+        statusOf(eventId) shouldBe "PENDING"
+        retryCountOf(eventId) shouldBe 0
     }
 }) {
     override fun extensions() = listOf(SpringExtension)
