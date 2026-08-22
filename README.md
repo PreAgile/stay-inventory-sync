@@ -273,12 +273,28 @@ H2는 사용하지 않는다. `SELECT FOR UPDATE`의 동작이 PostgreSQL과 달
 
 ## 6. 실행
 
+### 테스트
+
 ```bash
-docker compose up -d
 ./gradlew test
 ```
 
+**Docker 만 떠 있으면 된다. `docker compose` 는 필요하지 않다.**
+Testcontainers 가 실행마다 격리된 PostgreSQL 16 을 띄운다 — 테스트가 로컬 DB 상태에
+의존하면 "내 로컬에서는 통과" 가 생긴다.
+
 테스트가 전부 통과하면 이 프로젝트가 주장하는 것이 증명된 것이다.
+
+### 애플리케이션
+
+```bash
+docker compose up -d
+./gradlew bootRun
+```
+
+`docker-compose.yml` 은 **로컬에서 앱을 띄울 때만** 쓴다. 이미지는 `postgres:16-alpine` 로
+고정한다 — `inbound_message` 의 `UNIQUE NULLS NOT DISTINCT` 가 PostgreSQL 15 이상
+기능이므로 이 하한은 선택이 아니다. `PostgresCapabilityTest` 가 이 전제를 실행해서 확인한다.
 
 ---
 

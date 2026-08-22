@@ -1,0 +1,20 @@
+# 로컬에서 애플리케이션을 띄울 때 쓴다.
+# 테스트는 이 컨테이너를 쓰지 않는다 — Testcontainers 가 매 실행마다 격리된
+# PostgreSQL 을 띄운다. 테스트가 로컬 DB 상태에 의존하면 "내 로컬에서는 통과" 가 생긴다.
+services:
+  postgres:
+    # 16 으로 고정한다. inbound_message 의 UNIQUE NULLS NOT DISTINCT 가
+    # PostgreSQL 15 이상 기능이므로 이 하한은 선택이 아니다.
+    image: postgres:16-alpine
+    container_name: stayinv-postgres
+    environment:
+      POSTGRES_DB: stayinv
+      POSTGRES_USER: stayinv
+      POSTGRES_PASSWORD: stayinv
+    ports:
+      - "5432:5432"
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U stayinv -d stayinv"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
