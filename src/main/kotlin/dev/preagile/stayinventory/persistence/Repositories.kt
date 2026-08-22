@@ -1,6 +1,11 @@
 package dev.preagile.stayinventory.persistence
 
+import jakarta.persistence.LockModeType
 import org.springframework.data.jpa.repository.JpaRepository
+import org.springframework.data.jpa.repository.Lock
+import org.springframework.data.jpa.repository.Query
+import org.springframework.data.repository.query.Param
+import java.time.LocalDate
 
 /**
  * 테이블로 가는 유일한 경로.
@@ -18,7 +23,30 @@ interface PropertyRepository : JpaRepository<Property, Long>
 
 interface RoomTypeRepository : JpaRepository<RoomType, Long>
 
-interface DailyInventoryRepository : JpaRepository<DailyInventory, DailyInventoryId>
+interface DailyInventoryRepository : JpaRepository<DailyInventory, DailyInventoryId> {
+
+    /**
+     * 날짜 **한 행**을 `SELECT ... FOR UPDATE` 로 잠근다.
+     *
+     * 여러 날짜를 `IN` 절 하나로 잠그지 않는다. 그러면 락 획득 순서가 플래너의
+     * 손에 들어가고, 정렬을 지웠을 때 `T2` 가 실패한다는 보장이 사라진다 --
+     * 플래너가 우연히 인덱스 순서로 돌려주면 데드락이 안 나고, **테스트가 통과하는데
+     * 방어는 없는** 상태가 된다. 날짜 수만큼 왕복하는 비용을 내고 순서를
+     * 호출부의 루프에 둔다 (ADR-0002 · 절대 규칙 2).
+     *
+     * 반환이 null 이면 그 날짜에 재고 격자가 없다는 뜻이다. 격자 없이 파는 것은
+     * 차감 없이 파는 것이므로 거절 사유가 된다.
+     */
+    @Lock(LockModeType.PESSIMISTIC_WRITE)
+    @Query(
+        "select d from DailyInventory d " +
+            "where d.id.roomTypeId = :roomTypeId and d.id.stayDate = :stayDate",
+    )
+    fun lockForUpdate(
+        @Param("roomTypeId") roomTypeId: Long,
+        @Param("stayDate") stayDate: LocalDate,
+    ): DailyInventory?
+}
 
 interface ReservationRepository : JpaRepository<Reservation, Long>
 

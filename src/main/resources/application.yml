@@ -10,6 +10,15 @@ spring:
       # 이 워크로드의 상한은 스레드가 아니라 커넥션 풀이다 (ADR-0006).
       # 가상 스레드를 켜지 않는 근거가 이 숫자에 있으므로 명시적으로 둔다.
       maximum-pool-size: 20
+      # 락 대기 상한 (ADR-0002 부가 결정). 무한 대기는 커넥션 풀을 고갈시킨다 --
+      # 한 요청이 영원히 기다리면 그 커넥션이 영원히 안 돌아오고, 그것이 20번
+      # 반복되면 서비스 전체가 멈춘다. 재고 트랜잭션은 락 안에서 외부 I/O 를
+      # 하지 않으므로(절대 규칙 4) 정상 대기가 이 값에 닿을 이유가 없다.
+      #
+      # PostgreSQL 은 SELECT ... FOR UPDATE WAIT n 문법이 없어서 JPA 의
+      # jakarta.persistence.lock.timeout 힌트가 먹지 않는다. 커넥션 수립 시
+      # 세션 변수로 건다.
+      connection-init-sql: SET lock_timeout = '5s'
 
   jpa:
     # 스키마의 단일 진실 원천은 Flyway 다. Hibernate 가 테이블을 만들면

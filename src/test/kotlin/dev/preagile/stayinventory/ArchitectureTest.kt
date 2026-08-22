@@ -3,6 +3,7 @@ package dev.preagile.stayinventory
 import com.tngtech.archunit.core.domain.JavaClasses
 import com.tngtech.archunit.core.importer.ClassFileImporter
 import com.tngtech.archunit.core.importer.ImportOption
+import dev.preagile.stayinventory.persistence.DailyInventory
 import com.tngtech.archunit.lang.syntax.ArchRuleDefinition.noClasses
 import com.tngtech.archunit.lang.syntax.ArchRuleDefinition.noFields
 import com.tngtech.archunit.lang.syntax.ArchRuleDefinition.noMethods
@@ -112,12 +113,32 @@ class ArchitectureTest : FunSpec({
             .check(production)
     }
 
+    test("재고 카운터는 InventoryService 밖에서 바뀌지 않는다") {
+        // Given: sold 를 옮기는 세터
+        // Then: 이 규칙이 성립하려면 연관 매핑이 없어야 한다. 연관을 타고 들어간
+        // 필드 변경은 InventoryService 에도 Repository 에도 정적 참조를 남기지
+        // 않으면서 UPDATE 를 만들고, ArchUnit 은 정적 참조를 본다 (ADR-0008)
+        noClasses()
+            .that().resideOutsideOfPackages("..stayinventory.inventory..")
+            .should().callMethod(DailyInventory::class.java, "setSold", Int::class.java)
+            .because("재고 변경 경로가 둘이 되면 어느 쪽이 락을 잡았는지 판정할 수 없다")
+            .check(production)
+    }
+
+    test("영속 패키지는 재고 서비스를 모른다 — 의존 방향이 한쪽이다") {
+        // 엔티티가 서비스를 부르기 시작하면 "누가 누구를 통제하는가" 가 뒤집히고,
+        // 위 규칙이 검사할 경계 자체가 사라진다
+        noClasses()
+            .that().resideInAPackage("..stayinventory.persistence..")
+            .should().dependOnClassesThat().resideInAPackage("..stayinventory.inventory..")
+            .check(production)
+    }
+
     // ── 아직 오지 않은 규칙 ────────────────────────────────────────────────
     test("대상이 생기면 규칙도 함께 와야 한다 — 미착수 패키지 목록") {
         // Given: docs/03-testing-strategy.md 가 규칙을 약속했지만 대상이 없는 패키지
         val notYet = mapOf(
             "..stayinventory.outbox.relay.." to "릴레이는 JPA Repository 에 의존하지 않는다 (#4 · #8)",
-            "..stayinventory.inventory.." to "재고 변경은 InventoryService 를 통해서만 (#3)",
             "..stayinventory.channel.." to "ChannelAdapter 는 Repository 를 직접 참조하지 않는다 (#4)",
         )
 
