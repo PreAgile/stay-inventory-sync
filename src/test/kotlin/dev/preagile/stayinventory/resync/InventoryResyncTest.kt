@@ -299,6 +299,21 @@ class InventoryResyncTest(
         okCycle.sent shouldBe 2
     }
 
+    test("#71 구간이 바뀌면 커서를 초기화한다 — 0건을 한 바퀴 완료로 보고하지 않는다") {
+        // Given: 넓은 구간을 돌아 커서가 뒤로 가 있다 (스케줄러가 앞서간 상태)
+        fixture.seedGrid(march1, days = 10, physicalTotal = 10)
+        runResync(limit = 8)
+        adapter.reset()
+
+        // When: 운영자가 **더 이른 구간**을 수동 요청한다
+        val manual = resync.resync(march1, march1.plusDays(3), limit = 8)
+
+        // Then: 구간 판정이 없으면 키셋 조건에 걸려 0건이 읽히고
+        // "한 바퀴 완료" 로 보고된다 -- 실제로는 아무것도 나가지 않는 거짓 성공이다
+        manual.sent shouldBe 3
+        adapter.snapshots shouldBe 3
+    }
+
     // ── #67 임대 — 인스턴스 하나만 돈다 ───────────────────────────────────
     test("#67 다른 인스턴스가 임대를 들고 있으면 그 주기를 건너뛴다 — 전량이 N번 나가지 않는다") {
         // Given: 격자와, 이미 잡혀 있는 임대
@@ -342,6 +357,29 @@ class InventoryResyncTest(
         val report = runResync()
         report.skipped shouldBe false
         report.sent shouldBe 2
+    }
+
+    test("#67 전송 중 임대를 잃으면 커서를 쓰지 않고 그 사실을 보고한다") {
+        // Given: 임대를 잡은 뒤 다른 인스턴스가 가로챈 상황을 만든다.
+        // 어댑터가 첫 전송에서 토큰을 바꿔치기해 A 의 뒤늦은 쓰기를 재현한다
+        fixture.seedGrid(march1, days = 3, physicalTotal = 10)
+
+        // 임대를 만료시켜 두면 acquireLease 가 잡고, 그 사이 토큰을 갈아 끼운다
+        val hijack = {
+            jdbc.update(
+                "UPDATE resync_cursor SET lease_token = gen_random_uuid(), " +
+                    "leased_until = now() + interval '10 minutes' WHERE id = 1",
+            )
+        }
+        // When: 주기 도중 토큰이 바뀐다
+        adapter.beforeSnapshot = { hijack() }
+        val report = runResync(limit = 3)
+        adapter.beforeSnapshot = null
+
+        // Then: 커서를 쓰지 못했음을 보고한다. 조용히 성공으로 보고하면
+        // A 의 쓰기가 B 의 진행을 덮어 C 까지 중복 실행된다
+        report.leaseLost shouldBe true
+        report.cycleCompleted shouldBe false
     }
 
     test("구간이 뒤집혀 있으면 거부한다") {

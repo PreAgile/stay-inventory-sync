@@ -29,9 +29,25 @@ CREATE TABLE resync_cursor (
     last_room_type_id BIGINT       NOT NULL DEFAULT 0,
     last_stay_date    DATE         NOT NULL DEFAULT DATE '0001-01-01',
 
+    -- 커서가 어느 구간을 훑던 것인지. 요청 구간이 바뀌면 커서를 초기화해야 한다.
+    --
+    -- 없으면 조용한 거짓 성공이 난다 -- 스케줄러가 넓은 구간을 돌아 커서가 뒤로
+    -- 가 있는데 운영자가 더 이른 구간을 수동 요청하면, 키셋 조건에 걸려 0건이
+    -- 읽히고 "한 바퀴 완료" 로 보고된다. 실제로는 아무것도 나가지 않았다.
+    window_from       DATE,
+    window_to         DATE,
+
     -- 임대. 미래면 다른 인스턴스가 돌고 있다는 뜻이다.
     -- NULL 로 되돌리는 것이 정상 종료이고, 프로세스가 죽으면 시각이 지나 풀린다.
     leased_until      TIMESTAMPTZ,
+
+    -- 임대 소유자. 펜싱 토큰이다.
+    --
+    -- 만료 시각만으로 관리하면 A 가 임대 시간을 넘겼을 때 B 가 임대를 잡고,
+    -- 그 뒤 A 의 커서 기록과 해제가 **B 의 상태를 덮는다.** 그러면 C 까지
+    -- 중복 실행된다. 모든 쓰기를 이 토큰 조건으로 제한해 A 의 뒤늦은 쓰기가
+    -- rowcount 0 으로 떨어지게 한다 -- 잃은 것을 조용히 넘기지 않고 감지한다.
+    lease_token       UUID,
 
     updated_at        TIMESTAMPTZ  NOT NULL DEFAULT now(),
 

@@ -39,6 +39,16 @@ class RecordingChannelAdapter : ChannelAdapter {
     @Volatile
     var forcedResult: ChannelSyncResult? = null
 
+    /**
+     * 스냅샷 전송 **직전**에 불린다. 테스트가 그 순간의 외부 상태를 바꿔
+     * 경합을 결정론적으로 재현하는 데 쓴다 -- 임대 가로채기가 그 경우다.
+     *
+     * 프로덕션에서는 늘 null 이다. 스텁이 경합 주입점을 갖는 것이
+     * `dropSilently` 와 같은 성질이다.
+     */
+    @Volatile
+    var beforeSnapshot: (() -> Unit)? = null
+
     val attempts: Int get() = attemptCounter.get()
 
     /** 실질 부작용 횟수. `T4` 가 이 숫자를 본다. */
@@ -56,6 +66,7 @@ class RecordingChannelAdapter : ChannelAdapter {
         caps.clear()
         snapshotCounter.set(0)
         forcedResult = null
+        beforeSnapshot = null
     }
 
     /**
@@ -141,6 +152,7 @@ class RecordingChannelAdapter : ChannelAdapter {
         stayDate: java.time.LocalDate,
         remaining: Int,
     ): ChannelSyncResult {
+        beforeSnapshot?.invoke()
         attemptCounter.incrementAndGet()
         forcedResult?.let { return it }
 

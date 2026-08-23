@@ -93,7 +93,10 @@ erDiagram
         int      id PK "단일 행. CHECK (id = 1)"
         bigint   last_room_type_id "키셋 커서"
         date     last_stay_date
+        date     window_from "커서가 훑던 구간. 바뀌면 초기화한다"
+        date     window_to
         timestamptz leased_until "미래면 다른 인스턴스가 돌고 있다"
+        uuid     lease_token "펜싱 토큰. 모든 쓰기가 이 조건을 붙인다"
         timestamptz updated_at
     }
 

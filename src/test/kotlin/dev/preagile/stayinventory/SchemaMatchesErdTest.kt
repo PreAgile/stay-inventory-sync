@@ -42,6 +42,7 @@ class SchemaMatchesErdTest(
         "date" to "date",
         "timestamptz" to "timestamp with time zone",
         "jsonb" to "jsonb",
+        "uuid" to "uuid",
     )
 
     data class ErdColumn(val name: String, val type: String, val isPk: Boolean)
