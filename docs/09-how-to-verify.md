@@ -55,6 +55,8 @@ Testcontainers 가 실행마다 격리된 PostgreSQL 16 을 띄운다.
 | 엔티티 간 연관 매핑이 없다 | `--tests '*ArchitectureTest*'` | — (규칙 자체) |
 | 불변식 훅이 두 엔진 모두에 걸려 있다 | `--tests '*InvariantHook*ReachabilityTest*'` | 한쪽만 등록하면 실패 |
 | ERD 와 실제 스키마가 일치한다 | `--tests '*SchemaMatchesErdTest*'` | 타입·PK·FK 변경 |
+| **`/ops` 전부가 키 없이는 401** | `--tests '*OpsSecurityTest*'` | 패턴 기반 필터 (`#74`) |
+| **readiness 가 DB 를 본다** | `--tests '*OpsSecurityTest*'` | actuator 프로브 분리 (`#69`) |
 
 ### 스키마 제약이 실제로 막는지 보기
 
