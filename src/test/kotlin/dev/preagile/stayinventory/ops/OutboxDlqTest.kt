@@ -8,6 +8,7 @@ import dev.preagile.stayinventory.inventory.InventoryService
 import dev.preagile.stayinventory.inventory.ReserveCommand
 import dev.preagile.stayinventory.inventory.runConcurrentlyOrFail
 import dev.preagile.stayinventory.outbox.relay.OutboxRelay
+import dev.preagile.stayinventory.support.withOpsKey
 import io.kotest.core.spec.style.FunSpec
 import io.kotest.extensions.spring.SpringExtension
 import io.kotest.matchers.shouldBe
@@ -192,7 +193,7 @@ class OutboxDlqTest(
         relay.drain()
 
         // When
-        val response = mockMvc.perform(get("/ops/outbox/dead")).andReturn().response
+        val response = mockMvc.perform(get("/ops/outbox/dead").withOpsKey()).andReturn().response
 
         // Then: 무엇이 안 나갔는지 모르면 되살릴지 판단할 수 없다.
         // 재고 통보라면 지금 값과 비교해야 하고, 이미 더 새로운 값이 나갔다면
@@ -212,7 +213,7 @@ class OutboxDlqTest(
         statusOf(eventId) shouldBe "DEAD"
 
         // When: 운영자가 원인을 고치고 재투입한다
-        val response = mockMvc.perform(post("/ops/outbox/$eventId/retry")).andReturn().response
+        val response = mockMvc.perform(post("/ops/outbox/$eventId/retry").withOpsKey()).andReturn().response
 
         // Then: retry_count 를 되돌리지 않으면 다음 실패 한 번에 다시 죽어
         // 재투입이 사실상 아무 일도 하지 않는다
@@ -232,7 +233,7 @@ class OutboxDlqTest(
         val eventId = singleEventId()
 
         // When
-        val response = mockMvc.perform(post("/ops/outbox/$eventId/retry")).andReturn().response
+        val response = mockMvc.perform(post("/ops/outbox/$eventId/retry").withOpsKey()).andReturn().response
 
         // Then: PENDING 을 되살리면 백오프가 초기화되어 장애 중인 채널을 더 세게
         // 때린다. PUBLISHED 를 되살리면 이미 나간 통보가, 그것도 낡은 값으로 다시 나간다
@@ -249,7 +250,7 @@ class OutboxDlqTest(
         statusOf(eventId) shouldBe "PUBLISHED"
 
         // When: 되살리려 한다
-        val response = mockMvc.perform(post("/ops/outbox/$eventId/retry")).andReturn().response
+        val response = mockMvc.perform(post("/ops/outbox/$eventId/retry").withOpsKey()).andReturn().response
 
         // Then: 이미 나간 통보가 낡은 값으로 다시 나가는 것을 막는다
         response.status shouldBe 409
@@ -269,7 +270,7 @@ class OutboxDlqTest(
         // 이 테스트가 지키려는 것은 **읽기와 쓰기 사이가 열리지 않는다**는 쪽이다
         val statuses = java.util.concurrent.ConcurrentLinkedQueue<Int>()
         runConcurrentlyOrFail(2) {
-            statuses += mockMvc.perform(post("/ops/outbox/$eventId/retry"))
+            statuses += mockMvc.perform(post("/ops/outbox/$eventId/retry").withOpsKey())
                 .andReturn().response.status
         }
 

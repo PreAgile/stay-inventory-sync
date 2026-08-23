@@ -6,6 +6,7 @@ import dev.preagile.stayinventory.inventory.InventoryFixture
 import dev.preagile.stayinventory.inventory.InventoryService
 import dev.preagile.stayinventory.inventory.ReserveCommand
 import dev.preagile.stayinventory.outbox.relay.OutboxRelay
+import dev.preagile.stayinventory.support.withOpsKey
 import io.kotest.core.spec.style.FunSpec
 import io.kotest.extensions.spring.SpringExtension
 import io.kotest.matchers.collections.shouldHaveSize
@@ -221,7 +222,7 @@ class InventoryDiffTest(
 
         // When
         val response = mockMvc.perform(
-            get("/ops/inventory-diff")
+            get("/ops/inventory-diff").withOpsKey()
                 .param("propertyId", propertyId().toString())
                 .param("from", march1.toString())
                 .param("to", march1.plusDays(2).toString()),

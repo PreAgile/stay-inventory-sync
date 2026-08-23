@@ -8,6 +8,7 @@ import dev.preagile.stayinventory.inventory.InventoryService
 import dev.preagile.stayinventory.inventory.ReserveCommand
 import dev.preagile.stayinventory.inventory.ReserveResult
 import dev.preagile.stayinventory.outbox.relay.OutboxRelay
+import dev.preagile.stayinventory.support.withOpsKey
 import io.kotest.core.spec.style.FunSpec
 import io.kotest.extensions.spring.SpringExtension
 import io.kotest.matchers.doubles.shouldBeGreaterThan
@@ -230,7 +231,7 @@ class MetricsTest(
         relay.drain()
 
         // When
-        val response = mockMvc.perform(get("/ops/metrics")).andReturn().response
+        val response = mockMvc.perform(get("/ops/metrics").withOpsKey()).andReturn().response
 
         // Then: 나눠 두면 사람이 두 번 봐야 하고, 두 번 보면 한 번은 안 본다
         response.status shouldBe 200
