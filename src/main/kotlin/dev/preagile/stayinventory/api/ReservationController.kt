@@ -19,7 +19,6 @@ import org.springframework.web.bind.annotation.RequestHeader
 import org.springframework.web.bind.annotation.RequestMapping
 import org.springframework.web.bind.annotation.RestController
 import java.time.LocalDate
-import java.util.UUID
 
 /**
  * 예약 생성 진입점.
@@ -131,7 +130,13 @@ data class CreateReservationRequest(
     val checkOut: LocalDate,
     @field:Min(1) val roomCount: Int = 1,
     @field:NotBlank val channel: String,
-    /** 채널이 준 예약 번호. 직접 예약이면 비운다 -- 서버가 UUID 를 채운다. */
+    /**
+     * 채널이 준 예약 번호. 직접 예약이면 비우고 **`Idempotency-Key` 헤더를 대신 준다.**
+     *
+     * 둘 다 없으면 `400` 이다. 예전에는 여기가 비면 **서버가 UUID 를 만들었고**,
+     * 그래서 타임아웃 뒤 재시도가 매번 다른 키를 들고 와 중복 예약이 됐다
+     * -- `UNIQUE` 는 살아 있는데 판정 대상이 사라진 경우다 (`#64`, ADR-0014).
+     */
     val channelReservationId: String? = null,
     @field:NotBlank val guestName: String,
 )

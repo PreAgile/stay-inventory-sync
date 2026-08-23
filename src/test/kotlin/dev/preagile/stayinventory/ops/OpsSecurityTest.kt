@@ -56,9 +56,54 @@ class OpsSecurityTest(
         }
     }
 
-    test("#74 /ops 경로 전부가 키 없이는 401 이다 — 목록이 아니라 패턴으로 막는다") {
+    /**
+     * 키 없이 열리는 것은 **콘솔 껍데기 하나뿐**이다 (`#80`).
+     *
+     * 이 집합을 테스트에 박아 두는 이유는, 예외를 늘리는 순간 아래 두 스펙이 **함께**
+     * 깨지게 하기 위해서다 -- 새 예외는 여기 적히지 않으면 401 스펙에서 걸리고,
+     * 여기 적으면 "예외는 정확히 하나" 스펙에서 걸린다.
+     */
+    val exempt = setOf("GET" to OpsConsoleController.PATH)
+
+    test("#80 키 없이 열리는 /ops 경로는 콘솔 껍데기 하나뿐이다") {
         // Given: 실제 매핑에서 뽑은 /ops 경로들
-        val paths = opsPaths()
+        // When: 키 없이 전부 부른다
+        val open = opsPaths().filter { (method, path) ->
+            val req = when (method) {
+                "POST" -> post(path.replace("{id}", "1"))
+                "PUT" -> org.springframework.test.web.servlet.request.MockMvcRequestBuilders
+                    .put(path)
+                "DELETE" -> org.springframework.test.web.servlet.request.MockMvcRequestBuilders
+                    .delete(path)
+                else -> get(path)
+            }
+            mockMvc.perform(req).andReturn().response.status != 401
+        }.toSet()
+
+        // Then: 열린 집합이 선언한 예외와 **정확히 같다**.
+        // 부분집합으로 두면 예외를 늘려도 통과한다
+        open shouldBe exempt
+    }
+
+    test("#80 콘솔 껍데기는 키 없이 열리지만 그 안에 데이터가 없다") {
+        // Given / When: 키 없이 콘솔을 연다
+        val res = mockMvc.perform(get(OpsConsoleController.PATH)).andReturn().response
+
+        // Then: 200 HTML 이다. 브라우저 최상위 이동에는 헤더를 붙일 수단이 없다
+        res.status shouldBe 200
+        res.contentType!!.startsWith("text/html") shouldBe true
+
+        // Then: **여는 것은 빈 문서다.** 숫자는 브라우저가 키를 붙여 따로 가져온다.
+        // 서버가 값을 끼워 넣기 시작하면 이 예외가 곧 데이터 유출 경로가 된다
+        val body = res.contentAsString
+        body.contains("X-Ops-Key") shouldBe true
+        listOf("overbookingPrevented\"", "\"pending\"", "\"dead\"", "outbox_event")
+            .none { body.contains(it) } shouldBe true
+    }
+
+    test("#74 /ops 경로 전부가 키 없이는 401 이다 — 목록이 아니라 패턴으로 막는다") {
+        // Given: 실제 매핑에서 뽑은 /ops 경로들 (콘솔 껍데기 제외 — #80)
+        val paths = opsPaths().filterNot { it in exempt }
         paths.isNotEmpty() shouldBe true
 
         // When / Then: 하나라도 통과하면 그 경로가 열려 있다

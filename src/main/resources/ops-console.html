@@ -1,0 +1,402 @@
+<!doctype html>
+<html lang="ko">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>stay-inventory-sync — 운영 콘솔</title>
+<style>
+  :root {
+    --bg: #fbfbfa; --panel: #fff; --line: #e3e2df; --ink: #23211e; --dim: #6b6862;
+    --accent: #1f6feb; --bad: #c0392b; --warn: #b26a00; --ok: #1a7f4b;
+    --mono: ui-monospace, SFMono-Regular, "SF Mono", Menlo, monospace;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root {
+      --bg: #171614; --panel: #1e1d1a; --line: #34322e; --ink: #e8e6e1; --dim: #9a958c;
+      --accent: #58a6ff; --bad: #f0776a; --warn: #e0a33e; --ok: #4ec98a;
+    }
+  }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0; background: var(--bg); color: var(--ink);
+    font: 15px/1.6 -apple-system, BlinkMacSystemFont, "Apple SD Gothic Neo", "Pretendard", sans-serif;
+  }
+  header {
+    border-bottom: 1px solid var(--line); padding: 14px 20px;
+    display: flex; align-items: baseline; gap: 12px; flex-wrap: wrap;
+  }
+  header h1 { font-size: 15px; margin: 0; font-weight: 600; }
+  header .sub { color: var(--dim); font-size: 13px; }
+  header .spacer { flex: 1; }
+  main { padding: 20px; max-width: 1100px; }
+  section {
+    background: var(--panel); border: 1px solid var(--line);
+    border-radius: 8px; padding: 16px 18px; margin-bottom: 18px;
+  }
+  section > h2 {
+    font-size: 13px; margin: 0 0 4px; font-weight: 600;
+    letter-spacing: .02em;
+  }
+  section > .why { color: var(--dim); font-size: 12.5px; margin: 0 0 14px; }
+  .tiles { display: flex; gap: 10px; flex-wrap: wrap; }
+  .tile {
+    border: 1px solid var(--line); border-radius: 6px; padding: 10px 14px;
+    min-width: 132px; background: var(--bg);
+  }
+  .tile .k { color: var(--dim); font-size: 11.5px; }
+  .tile .v { font-family: var(--mono); font-size: 20px; margin-top: 2px; }
+  .tile.bad .v { color: var(--bad); }
+  .tile.ok  .v { color: var(--ok); }
+  table { width: 100%; border-collapse: collapse; font-size: 13px; }
+  th, td {
+    text-align: left; padding: 7px 9px; border-bottom: 1px solid var(--line);
+    vertical-align: top;
+  }
+  th { color: var(--dim); font-weight: 500; font-size: 11.5px; }
+  td.num, th.num { text-align: right; font-family: var(--mono); }
+  .scroll { overflow-x: auto; }
+  button {
+    font: inherit; font-size: 13px; padding: 5px 11px; cursor: pointer;
+    border: 1px solid var(--line); border-radius: 5px;
+    background: var(--panel); color: var(--ink);
+  }
+  button:hover:not(:disabled) { border-color: var(--accent); color: var(--accent); }
+  button:disabled { opacity: .45; cursor: default; }
+  button.primary { border-color: var(--accent); color: var(--accent); }
+  input {
+    font: inherit; font-size: 13px; padding: 5px 8px; color: var(--ink);
+    border: 1px solid var(--line); border-radius: 5px; background: var(--bg);
+  }
+  .row { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; margin-bottom: 12px; }
+  .row label { color: var(--dim); font-size: 12.5px; }
+  .msg { font-size: 12.5px; margin-top: 10px; white-space: pre-wrap; }
+  .msg.bad { color: var(--bad); } .msg.ok { color: var(--ok); } .msg.dim { color: var(--dim); }
+  .empty { color: var(--dim); font-size: 13px; padding: 6px 0; }
+  code { font-family: var(--mono); font-size: 12.5px; }
+  a { color: var(--accent); }
+  #gate { max-width: 520px; }
+  .foot { color: var(--dim); font-size: 12px; padding: 0 20px 28px; max-width: 1100px; }
+</style>
+</head>
+<body>
+
+<header>
+  <h1>stay-inventory-sync</h1>
+  <span class="sub">운영 콘솔 — 무엇을 보고 무엇을 누르나</span>
+  <span class="spacer"></span>
+  <span class="sub" id="stamp"></span>
+  <button id="logout" hidden>키 지우기</button>
+</header>
+
+<main>
+
+  <section id="gate">
+    <h2>운영 키</h2>
+    <p class="why">
+      이 문서에는 아무 데이터도 없다. 숫자는 전부 <code>X-Ops-Key</code> 를 붙여 따로 가져온다.
+      키는 이 탭에만 남고 탭을 닫으면 사라진다.
+    </p>
+    <div class="row">
+      <input id="key" type="password" placeholder="X-Ops-Key" size="34" autocomplete="off">
+      <button class="primary" id="enter">들어가기</button>
+    </div>
+    <div class="msg bad" id="gateMsg" hidden></div>
+  </section>
+
+  <div id="app" hidden>
+
+    <section>
+      <h2>지표</h2>
+      <p class="why">
+        평균을 내지 않는다 — 재고 통보의 지연은 꼬리가 문제이고 평균은 그 소수를 지운다.
+        backlog 를 따로 내는 이유는 발행된 것만으로 분포를 내면
+        <strong>영원히 안 나가는 이벤트가 쌓일 때 분포가 오히려 좋아 보이기</strong> 때문이다.
+      </p>
+      <div class="tiles" id="tiles"><div class="empty">불러오는 중…</div></div>
+      <div class="msg dim">
+        임계값은 날짜에 따라 다르다 — 오늘 밤 재고의 5분과 6개월 뒤 재고의 5분은 다른 사건이다.
+        표는 <code>docs/08-failure-and-recovery.md</code> §8.
+      </div>
+      <div class="msg bad" id="metricsMsg" hidden></div>
+    </section>
+
+    <section>
+      <h2>DEAD — 재시도가 소진된 통보</h2>
+      <p class="why">
+        429 로는 여기 오지 않는다. 소진 판정은 <strong>몇 번 실패했는가</strong>를 세지
+        몇 번 미뤘는가를 세지 않는다. 여기 쌓였다면 채널이 4xx 를 주었거나 5xx 가 여섯 번 이상이다.
+      </p>
+      <div class="row">
+        <button id="reloadDead">다시 읽기</button>
+        <span class="sub" id="deadCount"></span>
+      </div>
+      <div class="scroll">
+        <table>
+          <thead><tr>
+            <th class="num">id</th><th>aggregate</th><th>event</th>
+            <th>room_type / stay_date</th><th class="num">ver</th><th class="num">retry</th>
+            <th>created</th><th></th>
+          </tr></thead>
+          <tbody id="deadBody"></tbody>
+        </table>
+      </div>
+      <div class="msg" id="deadMsg" hidden></div>
+    </section>
+
+    <section>
+      <h2>재고 diff — 채널과 숫자가 어긋난 날짜</h2>
+      <p class="why">
+        가장 조용한 실패가 <strong>응답이 성공인데 채널에 반영되지 않은 경우</strong>다.
+        재시도도 로그도 알림도 없다. 그것을 잡는 것이 이 표다.
+      </p>
+      <div class="row">
+        <label>propertyId</label><input id="propertyId" type="number" value="1" size="4" style="width:80px">
+        <label>from</label><input id="from" type="date">
+        <label>to</label><input id="to" type="date">
+        <button id="runDiff">대조</button>
+        <button id="runResync" class="primary">재동기화</button>
+      </div>
+      <div class="scroll">
+        <table>
+          <thead><tr>
+            <th>channel</th><th class="num">room_type</th><th>stay_date</th>
+            <th class="num">우리</th><th class="num">채널</th><th class="num">delta</th>
+          </tr></thead>
+          <tbody id="diffBody"></tbody>
+        </table>
+      </div>
+      <div class="msg" id="diffMsg" hidden></div>
+    </section>
+
+  </div>
+</main>
+
+<p class="foot">
+  이 콘솔은 <code>/ops</code> 여섯 엔드포인트를 그대로 부른다. 여기서 할 수 있는 일은
+  전부 <code>curl</code> 로도 되고, 그 명령은 <code>docs/09-how-to-verify.md</code> 에 있다.
+</p>
+
+<script>
+(function () {
+  "use strict";
+
+  var KEY = "ops-key";
+  var $ = function (id) { return document.getElementById(id); };
+
+  function key() { try { return sessionStorage.getItem(KEY) || ""; } catch (e) { return ""; } }
+  function setKey(v) { try { v ? sessionStorage.setItem(KEY, v) : sessionStorage.removeItem(KEY); } catch (e) {} }
+
+  function show(el, text, cls) {
+    el.hidden = false; el.textContent = text;
+    el.className = "msg " + (cls || "");
+  }
+  function hide(el) { el.hidden = true; }
+
+  /** 401 이면 키를 버리고 입력창으로 되돌린다. 틀린 키를 쥔 채 화면에 있으면 원인을 못 찾는다. */
+  function req(path, opts) {
+    opts = opts || {};
+    opts.headers = Object.assign({ "X-Ops-Key": key() }, opts.headers || {});
+    return fetch(path, opts).then(function (res) {
+      if (res.status === 401) { setKey(""); gate("키가 거부됐다. 다시 넣는다."); throw new Error("401"); }
+      return res.text().then(function (body) {
+        var data = null;
+        try { data = body ? JSON.parse(body) : null; } catch (e) { data = null; }
+        return { ok: res.ok, status: res.status, data: data, text: body };
+      });
+    });
+  }
+
+  function gate(msg) {
+    $("app").hidden = true; $("gate").hidden = false; $("logout").hidden = true;
+    if (msg) show($("gateMsg"), msg, "bad"); else hide($("gateMsg"));
+    $("key").value = ""; $("key").focus();
+  }
+
+  function enter() {
+    var v = $("key").value.trim();
+    if (!v) { show($("gateMsg"), "키가 비어 있다.", "bad"); return; }
+    setKey(v);
+    // 지표 한 번으로 키를 확인한다. 401 이면 req 가 되돌린다.
+    req("/ops/metrics").then(function (r) {
+      if (!r.ok) { show($("gateMsg"), "확인 실패 — HTTP " + r.status, "bad"); return; }
+      hide($("gateMsg"));
+      $("gate").hidden = true; $("app").hidden = false; $("logout").hidden = false;
+      renderMetrics(r.data);
+      loadDead();
+    }).catch(function () {});
+  }
+
+  function n(v, digits) {
+    if (v === null || v === undefined) return "—";
+    return digits ? Number(v).toFixed(digits) : String(v);
+  }
+  function stamp() {
+    $("stamp").textContent = new Date().toLocaleTimeString("ko-KR");
+  }
+
+  function tile(k, v, cls) {
+    return '<div class="tile ' + (cls || "") + '"><div class="k">' + k +
+           '</div><div class="v">' + v + "</div></div>";
+  }
+
+  function renderMetrics(m) {
+    stamp();
+    if (!m) { $("tiles").innerHTML = '<div class="empty">응답이 비어 있다.</div>'; return; }
+    var lag = m.outboxPublishLag || {}, bl = m.outboxBacklog || {}, ob = m.overbookingPrevented || {};
+    $("tiles").innerHTML = [
+      tile("막은 오버부킹", n(ob.total)),
+      tile("발행 지연 p50", n(lag.p50Seconds, 1) + "s"),
+      tile("발행 지연 p95", n(lag.p95Seconds, 1) + "s"),
+      tile("발행 지연 max", n(lag.maxSeconds, 1) + "s"),
+      tile("PENDING", n(bl.pending)),
+      tile("DEAD", n(bl.dead), Number(bl.dead) > 0 ? "bad" : "ok"),
+      tile("SUPERSEDED", n(bl.superseded)),
+      tile("가장 오래된 PENDING", n(bl.oldestPendingAgeSeconds, 0) + "s",
+           Number(bl.oldestPendingAgeSeconds) > 900 ? "bad" : "")
+    ].join("");
+  }
+
+  function loadMetrics() {
+    req("/ops/metrics").then(function (r) {
+      if (r.ok) { hide($("metricsMsg")); renderMetrics(r.data); }
+      else show($("metricsMsg"), "지표를 읽지 못했다 — HTTP " + r.status, "bad");
+    }).catch(function () {});
+  }
+
+  function esc(s) {
+    return String(s === null || s === undefined ? "" : s)
+      .replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
+  }
+
+  function loadDead() {
+    hide($("deadMsg"));
+    req("/ops/outbox/dead?limit=100").then(function (r) {
+      if (!r.ok) { show($("deadMsg"), "DEAD 목록을 읽지 못했다 — HTTP " + r.status, "bad"); return; }
+      var rows = r.data || [];
+      $("deadCount").textContent = rows.length ? rows.length + "건" : "";
+      if (!rows.length) {
+        $("deadBody").innerHTML = '<tr><td colspan="8" class="empty">DEAD 가 없다.</td></tr>';
+        return;
+      }
+      $("deadBody").innerHTML = rows.map(function (e) {
+        return "<tr>" +
+          '<td class="num">' + esc(e.id) + "</td>" +
+          "<td>" + esc(e.aggregateType) + " / " + esc(e.aggregateId) + "</td>" +
+          "<td>" + esc(e.eventType) + "</td>" +
+          "<td>" + esc(e.roomTypeId) + " / " + esc(e.stayDate) + "</td>" +
+          '<td class="num">' + esc(e.version) + "</td>" +
+          '<td class="num">' + esc(e.retryCount) + "</td>" +
+          "<td>" + esc(e.createdAt) + "</td>" +
+          '<td><button data-retry="' + esc(e.id) + '">재투입</button></td>' +
+          "</tr>";
+      }).join("");
+    }).catch(function () {});
+  }
+
+  function retry(id, btn) {
+    btn.disabled = true; btn.textContent = "…";
+    req("/ops/outbox/" + id + "/retry", { method: "POST" }).then(function (r) {
+      if (r.ok) {
+        show($("deadMsg"), "#" + id + " 을 PENDING 으로 되돌렸다. 릴레이가 다음 주기에 집는다.", "ok");
+        loadDead(); loadMetrics();
+      } else if (r.status === 404) {
+        show($("deadMsg"), "#" + id + " 은 DEAD 가 아니다 — 이미 되돌려졌을 수 있다.", "bad");
+        loadDead();
+      } else {
+        show($("deadMsg"), "재투입 실패 — HTTP " + r.status, "bad");
+        btn.disabled = false; btn.textContent = "재투입";
+      }
+    }).catch(function () {});
+  }
+
+  function diffParams() {
+    return "propertyId=" + encodeURIComponent($("propertyId").value) +
+           "&from=" + encodeURIComponent($("from").value) +
+           "&to=" + encodeURIComponent($("to").value);
+  }
+
+  function runDiff() {
+    show($("diffMsg"), "대조 중…", "dim");
+    req("/ops/inventory-diff?" + diffParams()).then(function (r) {
+      if (!r.ok) {
+        show($("diffMsg"), "대조 실패 — HTTP " + r.status + (r.text ? "\n" + r.text : ""), "bad");
+        return;
+      }
+      var rows = r.data || [];
+      if (!rows.length) {
+        $("diffBody").innerHTML = "";
+        show($("diffMsg"), "어긋난 날짜가 없다.", "ok");
+        return;
+      }
+      hide($("diffMsg"));
+      $("diffBody").innerHTML = rows.map(function (d) {
+        return "<tr>" +
+          "<td>" + esc(d.channel) + "</td>" +
+          '<td class="num">' + esc(d.roomTypeId) + "</td>" +
+          "<td>" + esc(d.stayDate) + "</td>" +
+          '<td class="num">' + esc(d.internal) + "</td>" +
+          '<td class="num">' + esc(d.channelValue) + "</td>" +
+          '<td class="num">' + esc(d.delta) + "</td>" +
+          "</tr>";
+      }).join("");
+      show($("diffMsg"), rows.length + "개 날짜가 어긋나 있다.", "bad");
+    }).catch(function () {});
+  }
+
+  function runResync() {
+    var btn = $("runResync");
+    btn.disabled = true;
+    show($("diffMsg"), "재동기화 중…", "dim");
+    req("/ops/resync?from=" + encodeURIComponent($("from").value) +
+        "&to=" + encodeURIComponent($("to").value), { method: "POST" })
+      .then(function (r) {
+        if (r.status === 409) {
+          show($("diffMsg"), "건너뛰었다 — 다른 인스턴스나 스케줄러가 돌고 있다. 끝난 뒤 다시 누른다.", "bad");
+        } else if (r.ok) {
+          var rep = r.data || {};
+          // hasMore 는 커서가 격자를 다 훑지 못했다는 뜻이다. 한 번 더 눌러야 한다 --
+          // 그 사실을 감추면 "돌렸는데 왜 안 맞나" 가 된다 (#71).
+          show($("diffMsg"),
+            "재동기화 — 발행 " + n(rep.sent) + " · 실패 " + n(rep.failed) +
+            (rep.hasMore ? " · 남은 구간이 있다. 한 번 더 누른다." : " · 격자를 다 훑었다."),
+            rep.failed > 0 ? "bad" : "ok");
+          loadMetrics(); runDiff();
+        } else {
+          show($("diffMsg"), "재동기화 실패 — HTTP " + r.status + (r.text ? "\n" + r.text : ""), "bad");
+        }
+      })
+      .catch(function () {})
+      .then(function () { btn.disabled = false; });
+  }
+
+  // ── 배선 ──────────────────────────────────────────────────────────────
+  var today = new Date();
+  var iso = function (d) { return d.toISOString().slice(0, 10); };
+  $("from").value = iso(today);
+  $("to").value = iso(new Date(today.getTime() + 14 * 86400000));
+
+  $("enter").addEventListener("click", enter);
+  $("key").addEventListener("keydown", function (e) { if (e.key === "Enter") enter(); });
+  $("logout").addEventListener("click", function () { setKey(""); gate(null); });
+  $("reloadDead").addEventListener("click", function () { loadDead(); loadMetrics(); });
+  $("runDiff").addEventListener("click", runDiff);
+  $("runResync").addEventListener("click", runResync);
+  $("deadBody").addEventListener("click", function (e) {
+    var id = e.target && e.target.getAttribute && e.target.getAttribute("data-retry");
+    if (id) retry(id, e.target);
+  });
+
+  if (key()) {
+    req("/ops/metrics").then(function (r) {
+      if (r.ok) {
+        $("gate").hidden = true; $("app").hidden = false; $("logout").hidden = false;
+        renderMetrics(r.data); loadDead();
+      } else { gate(null); }
+    }).catch(function () {});
+  } else {
+    gate(null);
+  }
+})();
+</script>
+</body>
+</html>

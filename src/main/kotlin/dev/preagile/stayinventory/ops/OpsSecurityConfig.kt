@@ -69,6 +69,19 @@ class OpsSecurityConfig(
 /** 헤더 하나를 본다. 상수 시간 비교를 쓸 이유는 키가 짧지 않기 때문이다. */
 class OpsApiKeyFilter(private val expected: String) : OncePerRequestFilter() {
 
+    /**
+     * 콘솔 껍데기 하나만 통과시킨다 (`#80`).
+     *
+     * **패턴이 아니라 정확히 일치하는 한 경로다.** `startsWith` 로 두면
+     * `/ops/console-secrets` 같은 경로가 나중에 생겼을 때 조용히 함께 열린다.
+     *
+     * 이 응답에는 데이터가 없다 -- 숫자는 브라우저가 `X-Ops-Key` 를 붙여 따로
+     * 가져온다. 여는 이유는 **최상위 이동에 헤더를 붙일 수단이 없기** 때문이고,
+     * 대안(쿼리스트링 키 · 쿠키)이 더 나쁜 근거는 `OpsConsoleController` 에 적었다.
+     */
+    override fun shouldNotFilter(request: HttpServletRequest): Boolean =
+        request.method == "GET" && request.requestURI == OpsConsoleController.PATH
+
     override fun doFilterInternal(
         request: HttpServletRequest,
         response: HttpServletResponse,
