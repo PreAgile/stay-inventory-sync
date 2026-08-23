@@ -41,6 +41,9 @@ Testcontainers 가 실행마다 격리된 PostgreSQL 16 을 띄운다.
 | 낡은 발행이 최신 값을 덮어쓰지 않는다 | `--tests '*OutboxVersionStampTest*'` | 키 단위 버전 비교 |
 | 조용히 누락된 날짜를 잡아낸다 | `--tests '*InventoryDiffTest*'` | `null` 과 `0` 의 구분 |
 | 재동기화가 발행-마킹 창을 닫는다 | `--tests '*InventoryResyncTest*'` | 스냅샷 절대값 전송 |
+| **격자가 상한을 넘어도 전 구간이 덮인다** | `--tests '*InventoryResyncTest*'` | 키셋 커서 (`#71`) |
+| **인스턴스가 여러 대여도 한 대만 돈다** | `--tests '*InventoryResyncTest*'` | 조건부 UPDATE 임대 (`#67`) |
+| **동시 클릭이 조용히 성공하지 않는다** | `--tests '*ResyncOpsApiTest*'` | 임대 판정 → `409` |
 | 채널 캡이 노출을 제한한다 | `--tests '*ChannelCapTest*'` | `min(캡, 잔여)` 를 채널이 계산 |
 | 엔티티 간 연관 매핑이 없다 | `--tests '*ArchitectureTest*'` | — (규칙 자체) |
 | 불변식 훅이 두 엔진 모두에 걸려 있다 | `--tests '*InvariantHook*ReachabilityTest*'` | 한쪽만 등록하면 실패 |
@@ -58,7 +61,7 @@ Testcontainers 가 실행마다 격리된 PostgreSQL 16 을 띄운다.
 | 성격 | 개수 | 통과가 뜻하는 것 |
 |---|---|---|
 | **`SQLSTATE` 거부** | 11 | 그 자리가 실제로 막혀 있다 |
-| **카탈로그 확인** | 3 | 스키마의 모양이 그렇다 (테이블 8개 · `total` 컬럼 부재 · 부분 인덱스 정의) |
+| **카탈로그 확인** | 3 | 스키마의 모양이 그렇다 (테이블 9개 = 도메인 8 + 운영 1 · `total` 컬럼 부재 · 부분 인덱스 정의) |
 | **허용 동작** | 1 | **막히지 않아야 하는 것이 막히지 않는다** (재고 행 없는 미래 날짜의 정책) |
 
 세 번째가 하나뿐이지만 성격이 다르다. **제약이 정상 경로를 막지 않는지**도
@@ -95,7 +98,7 @@ Testcontainers 가 실행마다 격리된 PostgreSQL 16 을 띄운다.
 | DB 가 죽어도 웹훅 알림을 잃지 않는다 | 채널의 재시도에 의존한다. 우리 쪽에서 검증할 수 있는 것은 5xx 를 준다는 것까지다 |
 | 레이트 리밋 산정(분당 20회 등) | 외부 공개 스펙 인용이다. 스텁 환경에서는 재현되지 않는다 |
 | 6초 배치 간격이 429 를 막는다 | **막지 못한다.** 필요조건이고 충분조건이 아니라고 문서에 적었다 |
-| 인스턴스를 늘리면 재동기화가 N배 돈다 | 코드를 읽어 확인한 사실이고 테스트는 없다 (`#67`) |
+| Inbox 워커가 인스턴스마다 중복 시도한다 | 코드를 읽어 확인한 사실이고 테스트는 없다 (`#66`) |
 
 ---
 
@@ -104,8 +107,9 @@ Testcontainers 가 실행마다 격리된 PostgreSQL 16 을 띄운다.
 읽는 사람이 서술을 믿지 않고 직접 셀 수 있게 한다.
 
 ```bash
-# 테이블 8개
+# 도메인 테이블 8개 (V1) + 운영 1개 (V3)
 grep -c '^CREATE TABLE' src/main/resources/db/migration/V1__init.sql
+grep -c '^CREATE TABLE' src/main/resources/db/migration/V3__resync_cursor.sql
 
 # ADR 12개 — 각 파일에 「기각한 대안」이 있는지
 ls docs/adr/*.md | wc -l
@@ -114,15 +118,18 @@ grep -l '기각' docs/adr/*.md | wc -l   # 12 중 11. 나머지 하나는 기각
 # 흐름 경로별 트랜잭션 경계
 grep -rn '@Transactional' src/main/kotlin
 
-# 다중 인스턴스 방어가 어디에 있는지 — 한 곳뿐이다
+# 다중 인스턴스 방어 — 릴레이는 SKIP LOCKED, 재동기화는 조건부 UPDATE 임대
 grep -rn 'SKIP LOCKED' src/main/kotlin
+grep -rn 'leased_until' src/main/kotlin
 
 # 테스트 수
 grep -rc 'test(' src/test --include='*.kt' | awk -F: '{s+=$2} END {print s}'
 ```
 
-마지막에서 두 번째 명령이 중요하다. **`SKIP LOCKED` 가 한 곳뿐인 것이 사실이고**,
-그 비대칭의 근거와 공백은 [`08-failure-and-recovery.md`](08-failure-and-recovery.md) §7 에 있다.
+다중 인스턴스 방어를 두 명령으로 나눠 확인하는 이유는 **방식이 다르기 때문**이다 —
+릴레이는 `SKIP LOCKED` 집기-임대, 재동기화는 `leased_until` 조건부 UPDATE.
+**Inbox 워커에는 둘 다 없고**, 그 비대칭의 근거와 공백은
+[`08-failure-and-recovery.md`](08-failure-and-recovery.md) §7 에 있다.
 
 ---
 

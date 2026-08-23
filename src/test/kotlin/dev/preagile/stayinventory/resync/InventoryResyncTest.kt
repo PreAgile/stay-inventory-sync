@@ -229,7 +229,8 @@ class InventoryResyncTest(
         // Then: 조용히 자르면 "재동기화했다" 는 신호가 거짓이 된다.
         // 절반만 보내고도 성공으로 읽힌다
         report.sent shouldBe 2
-        report.truncated shouldBe true
+        report.hasMore shouldBe true
+        report.cycleCompleted shouldBe false
     }
 
     test("상한에 딱 맞으면 잘리지 않았다고 보고한다") {
@@ -237,9 +238,110 @@ class InventoryResyncTest(
         fixture.seedGrid(march1, days = 3, physicalTotal = 10)
         val report = runResync(limit = 3)
 
-        // Then: 경계에서 truncated 가 참이 되면 매 주기 거짓 경보가 뜬다
+        // Then: 경계에서 hasMore 가 참이 되면 매 주기 거짓 경보가 뜬다
         report.sent shouldBe 3
-        report.truncated shouldBe false
+        report.hasMore shouldBe false
+        report.cycleCompleted shouldBe true
+    }
+
+    // ── #71 커서 — 한 바퀴로 전 구간을 덮는다 ─────────────────────────────
+    test("#71 상한을 넘는 격자가 여러 주기에 걸쳐 전부 덮인다 — 앞 500건만 반복하지 않는다") {
+        // Given: 격자 5일, 상한 2. 한 주기로는 못 덮는다
+        fixture.seedGrid(march1, days = 5, physicalTotal = 10)
+
+        // When: 커서가 진행되도록 세 주기를 돈다
+        val r1 = runResync(limit = 2)
+        val r2 = runResync(limit = 2)
+        val r3 = runResync(limit = 2)
+
+        // Then: 5건이 전부 나갔다. 커서가 없으면 같은 2건이 세 번 나가고
+        // 3·4·5일차는 영원히 재동기화되지 않는다 (#71 의 원래 증상)
+        (r1.sent + r2.sent + r3.sent) shouldBe 5
+        adapter.snapshots shouldBe 5
+
+        // And: 마지막 주기가 한 바퀴 완료를 알린다
+        r1.cycleCompleted shouldBe false
+        r2.cycleCompleted shouldBe false
+        r3.cycleCompleted shouldBe true
+    }
+
+    test("#71 한 바퀴가 끝나면 커서가 처음으로 돌아간다 — 다음 바퀴가 다시 전 구간을 덮는다") {
+        // Given: 격자 3일, 상한 2
+        fixture.seedGrid(march1, days = 3, physicalTotal = 10)
+
+        // When: 한 바퀴(2주기)를 돈 뒤 한 주기 더 돈다
+        runResync(limit = 2)
+        runResync(limit = 2).cycleCompleted shouldBe true
+        adapter.reset()
+        val next = runResync(limit = 2)
+
+        // Then: 커서가 처음으로 돌아갔으므로 첫 구간부터 다시 보낸다.
+        // 되돌리지 않으면 한 바퀴 뒤 재동기화가 영구히 0건이 된다
+        next.sent shouldBe 2
+        next.cycleCompleted shouldBe false
+    }
+
+    test("#71 전송이 실패해도 커서는 진행한다 — 실패한 건이 뒤쪽을 굶기지 않는다") {
+        // Given: 격자 4일, 상한 2. 첫 주기가 전부 실패한다
+        fixture.seedGrid(march1, days = 4, physicalTotal = 10)
+        adapter.forcedResult = ChannelSyncResult.Retryable("채널 5xx")
+
+        // When: 실패하는 주기 뒤에 정상 주기를 돈다
+        val failedCycle = runResync(limit = 2)
+        adapter.forcedResult = null
+        adapter.reset()
+        val okCycle = runResync(limit = 2)
+
+        // Then: 실패한 건에서 멈추면 그 건이 영구히 막아 3·4일차가 굶는다.
+        // 진행시키므로 다음 주기가 뒤쪽을 본다 -- 실패는 다음 바퀴가 다시 시도한다
+        failedCycle.failed shouldBe 2
+        failedCycle.sent shouldBe 0
+        okCycle.sent shouldBe 2
+    }
+
+    // ── #67 임대 — 인스턴스 하나만 돈다 ───────────────────────────────────
+    test("#67 다른 인스턴스가 임대를 들고 있으면 그 주기를 건너뛴다 — 전량이 N번 나가지 않는다") {
+        // Given: 격자와, 이미 잡혀 있는 임대
+        fixture.seedGrid(march1, days = 3, physicalTotal = 10)
+        jdbc.update(
+            "UPDATE resync_cursor SET leased_until = now() + interval '10 minutes' WHERE id = 1",
+        )
+
+        // When
+        val report = runResync()
+
+        // Then: 아무것도 보내지 않고 skipped 로 보고한다.
+        // 방어가 없으면 인스턴스 N대가 전량을 N번 보내고, 스냅샷은 멱등키를
+        // 일부러 받지 않으므로 채널도 흡수하지 못한다
+        report.skipped shouldBe true
+        report.sent shouldBe 0
+        adapter.snapshots shouldBe 0
+    }
+
+    test("#67 임대는 주기가 끝나면 풀린다 — 한 번 돈 뒤 영구히 멈추지 않는다") {
+        // Given / When: 연속 두 주기
+        fixture.seedGrid(march1, days = 2, physicalTotal = 10)
+        val first = runResync(limit = 1)
+        val second = runResync(limit = 1)
+
+        // Then: 둘 다 돌았다. 풀지 않으면 두 번째가 skipped 가 되고
+        // 재동기화가 임대 만료(10분)까지 멈춘다
+        first.skipped shouldBe false
+        second.skipped shouldBe false
+        (first.sent + second.sent) shouldBe 2
+    }
+
+    test("#67 만료된 임대는 다시 잡힌다 — 죽은 인스턴스가 방어선을 영구히 막지 못한다") {
+        // Given: 과거 시각으로 남은 임대 (인스턴스가 죽은 뒤의 상태)
+        fixture.seedGrid(march1, days = 2, physicalTotal = 10)
+        jdbc.update(
+            "UPDATE resync_cursor SET leased_until = now() - interval '1 minute' WHERE id = 1",
+        )
+
+        // When / Then: 만료됐으므로 잡힌다
+        val report = runResync()
+        report.skipped shouldBe false
+        report.sent shouldBe 2
     }
 
     test("구간이 뒤집혀 있으면 거부한다") {

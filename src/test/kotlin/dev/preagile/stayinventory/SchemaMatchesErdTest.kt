@@ -223,7 +223,8 @@ class SchemaMatchesErdTest(
 
     companion object {
         /** ERD 가 말하는 테이블 수. 늘거나 줄면 이 숫자도 같이 고친다. */
-        private const val EXPECTED_TABLE_COUNT = 8
+        /** 도메인 8개 + 운영 1개(`resync_cursor`). 늘거나 줄면 이 숫자도 같이 고친다. */
+        private const val EXPECTED_TABLE_COUNT = 9
 
         /** (참조하는 테이블, 컬럼 목록, 참조되는 테이블). 복합 FK 도 한 행으로 나온다. */
         private const val FK_QUERY = """

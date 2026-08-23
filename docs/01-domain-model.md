@@ -89,6 +89,14 @@ erDiagram
         timestamptz updated_at
     }
 
+    RESYNC_CURSOR {
+        int      id PK "단일 행. CHECK (id = 1)"
+        bigint   last_room_type_id "키셋 커서"
+        date     last_stay_date
+        timestamptz leased_until "미래면 다른 인스턴스가 돌고 있다"
+        timestamptz updated_at
+    }
+
     INBOUND_MESSAGE {
         bigint   id PK
         varchar  channel      UK "external_id·sequence_key 와 복합 유니크"
@@ -102,6 +110,11 @@ erDiagram
         timestamptz processed_at
     }
 ```
+
+> **`RESYNC_CURSOR` 는 도메인 테이블이 아니다.** 도메인 8개 + 운영 1개다.
+> 재동기화가 격자를 어디까지 훑었는지(`#71`)와 인스턴스 하나만 돌게 하는
+> 임대(`#67`)를 담는다. 선이 하나도 없는 이유는 **아무것도 참조하지 않기
+> 때문**이다 — 진행 상태이지 사실의 기록이 아니다.
 
 ### ERD 를 읽는 두 가지 주의
 
