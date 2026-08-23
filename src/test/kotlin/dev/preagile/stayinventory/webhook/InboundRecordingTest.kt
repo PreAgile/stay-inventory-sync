@@ -81,7 +81,7 @@ class InboundRecordingTest(
         recorder.record("CHANNEL_A", webhook(sequenceKey = null))
 
         // When: 판정 쿼리에 직접 묻는다
-        val recognized = inbound.alreadyReceived("CHANNEL_A", "R-1001", null)
+        val recognized = inbound.alreadyReceived("CHANNEL_A", "R-1001", "RESERVATION_CREATED", null)
 
         // Then / 왜 이렇게 보는가:
         //
@@ -97,8 +97,8 @@ class InboundRecordingTest(
 
         // 순서키를 주는 채널에서는 어느 쪽으로 짜도 맞으므로 조용히 뚫린다.
         // 그래서 null 쪽을 먼저 본다
-        inbound.alreadyReceived("CHANNEL_A", "R-1001", "1") shouldBe false
-        inbound.alreadyReceived("CHANNEL_B", "R-1001", null) shouldBe false
+        inbound.alreadyReceived("CHANNEL_A", "R-1001", "RESERVATION_CREATED", "1") shouldBe false
+        inbound.alreadyReceived("CHANNEL_B", "R-1001", "RESERVATION_CREATED", null) shouldBe false
     }
 
     test("순서키가 다르면 다른 알림이다 — 같은 예약의 후속 변경이다") {

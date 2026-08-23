@@ -78,6 +78,22 @@ class InboundMessageProcessor(
         )
         if (existing != null) return ProcessOutcome.IGNORED
 
+        // 묘비 검사 (ADR-0013). 이 예약에 **더 높은 rank 의 취소가 이미 기록돼
+        // 있으면** 이 생성은 낡은 것이다.
+        //
+        // 정렬은 한 배치 안에서만 순서를 정한다. 취소와 생성이 다른 폴링 주기에
+        // 도착하면 정렬이 개입할 자리가 없고, 그때 늦게 온 생성이 예약을 확정해
+        // **최신 취소가 사라진다** -- 팔리지 않아야 하는 방이 팔린 채 남는다.
+        //
+        // rank 가 null 이면 비교할 수 없으므로 검사하지 않는다. 그 채널의 한계는
+        // drift 검출이 받는다.
+        val rank = message.sequenceRank
+        if (rank != null &&
+            inbound.hasLaterCancel(message.channel, webhook.channelReservationId, rank)
+        ) {
+            return ProcessOutcome.IGNORED
+        }
+
         val command = ReserveCommand(
             roomTypeId = requireNotNull(webhook.roomTypeId) { "roomTypeId 가 없다" },
             checkIn = requireNotNull(webhook.checkIn) { "checkIn 이 없다" },

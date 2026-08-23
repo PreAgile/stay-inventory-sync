@@ -105,7 +105,9 @@ erDiagram
         varchar  channel      UK "external_id·sequence_key 와 복합 유니크"
         varchar  kind         "BOOKING|POLICY"
         varchar  external_id  UK "채널이 부여한 식별자"
-        varchar  sequence_key UK "순서 판정용. NULL 가능 -> NULLS NOT DISTINCT 필수"
+        varchar  sequence_key UK "순서 판정용 원본. NULL 가능 -> NULLS NOT DISTINCT 필수"
+        bigint   sequence_rank "어댑터가 정규화한 비교 가능한 값 (ADR-0013)"
+        varchar  event_type "RESERVATION_CREATED|RESERVATION_CANCELED. 묘비 판정용"
         jsonb    payload      "받은 그대로. 해석하지 않는다"
         varchar  status       "PENDING|PROCESSED|IGNORED|DEAD"
         int      attempt_count

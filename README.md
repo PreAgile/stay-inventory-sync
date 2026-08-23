@@ -383,7 +383,7 @@ persistence/  @Entity 8개와 리포지토리. 이 시스템에서 JPA 는 행 �
 | 외부 채널 장애 | 429 · 5xx · 4xx 를 **다르게** 다룬다 | 백오프 · DLQ · 수동 재투입 | 완결 |
 | 채널과 숫자가 어긋남 | 키 단위 버전 스탬프 | diff 리포트 · 재동기화(**키셋 커서**) | 완결 |
 | 인바운드 **중복** | Inbox 3중 멱등 | 워커 재시도 | 완결 |
-| 인바운드 **순서** | 순서키 정렬 | — | **부분** |
+| 인바운드 **순서** | rank 정렬 + 묘비 | — | 완결 (rank null 채널 제외) |
 | DB 장애 | `lock_timeout` · 풀 상한 | — | **부분** |
 | 인스턴스 증가 | 릴레이·재동기화는 임대 (Inbox 워커는 없음) | — | **부분** |
 
@@ -690,7 +690,7 @@ docker compose up -d
 | [07-reconciliation](docs/07-reconciliation.md) | 채널과의 대사 설계 · Inbox · 에코 판별 |
 | [08-failure-and-recovery](docs/08-failure-and-recovery.md) | **장애 여덟 갈래 · 회복 경로 · 아직 비어 있는 것** |
 | [09-how-to-verify](docs/09-how-to-verify.md) | **주장마다 어떤 명령으로 확인하나** |
-| [ADR](docs/adr/) | 설계 결정과 **기각한 대안** (`0001`~`0012`. `0008` 은 영속성 매핑 계층, `0012` 는 Outbox 순서) |
+| [ADR](docs/adr/) | 설계 결정과 **기각한 대안** (`0001`~`0013`. `0008` 은 영속성 매핑 계층, `0012`·`0013` 은 순서) |
 | [AGENTS.md](AGENTS.md) | 코딩 에이전트용 규약 (`CLAUDE.md`는 심볼릭 링크) |
 | [CONTRIBUTING.md](CONTRIBUTING.md) | 사람용 진입점 — 읽는 순서, 라벨·마일스톤 체계, PR 규약 |
 
