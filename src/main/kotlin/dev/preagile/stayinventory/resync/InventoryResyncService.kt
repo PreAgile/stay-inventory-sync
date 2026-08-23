@@ -86,7 +86,12 @@ class InventoryResyncService(
         }
 
         if (truncated) {
-            log.warn("재동기화가 상한 {}건에서 잘렸다. 남은 구간은 다음 주기가 처리한다", limit)
+            // 커서가 없으므로 다음 주기도 같은 앞 500건을 읽는다. 남은 구간은
+            // 처리되지 않는다 -- 사실과 다른 로그는 없는 로그보다 나쁘다 (#71).
+            log.warn(
+                "재동기화가 상한 {}건에서 잘렸다. 남은 구간은 처리되지 않는다 (#71)",
+                limit,
+            )
         }
         return ResyncReport(sent = sent, failed = failed, truncated = truncated)
     }
