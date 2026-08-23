@@ -31,6 +31,15 @@ dependencies {
     implementation("org.springframework.boot:spring-boot-starter-web")
     implementation("org.springframework.boot:spring-boot-starter-data-jpa")
     implementation("org.springframework.boot:spring-boot-starter-validation")
+    // 헬스체크·레디니스 (#69). 다중 인스턴스를 논하면서 인스턴스 생사를
+    // 판정할 수단이 없었다. Micrometer 는 여전히 안 쓴다 -- 지표는 /ops/metrics 다.
+    implementation("org.springframework.boot:spring-boot-starter-actuator")
+    // /ops 표면 인증(#74)에 spring-boot-starter-security 를 쓰지 않는다.
+    //
+    // 넣어 보니 **기본 필터 체인이 전역에 HTTP Basic 을 걸어** /actuator 와
+    // 도메인 경로까지 401 이 됐다. 정적 API 키 하나를 검사하는 데 필요한 것은
+    // 서블릿 필터뿐이고, 스타터는 우리가 쓰지 않는 기본값을 함께 들여온다.
+    // OAuth 가 필요해지면 그때 넣는다.
     implementation("org.jetbrains.kotlin:kotlin-reflect")
 
     implementation("org.flywaydb:flyway-core")

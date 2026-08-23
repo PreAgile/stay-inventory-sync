@@ -2,6 +2,7 @@ package dev.preagile.stayinventory.ops
 
 import dev.preagile.stayinventory.PostgresTestContainer
 import dev.preagile.stayinventory.inventory.InventoryFixture
+import dev.preagile.stayinventory.support.withOpsKey
 import io.kotest.core.spec.style.FunSpec
 import io.kotest.extensions.spring.SpringExtension
 import io.kotest.matchers.shouldBe
@@ -42,7 +43,7 @@ class ChannelPolicyApiTest(
 
     fun setCap(roomTypeId: Long, value: Int, channel: String = "CHANNEL_C") =
         mockMvc.perform(
-            put("/ops/channel-policy").contentType(MediaType.APPLICATION_JSON).content(
+            put("/ops/channel-policy").withOpsKey().contentType(MediaType.APPLICATION_JSON).content(
                 """
                 {"roomTypeId": $roomTypeId, "stayDate": "$march1",
                  "channel": "$channel", "value": $value}
@@ -90,7 +91,7 @@ class ChannelPolicyApiTest(
         setCap(roomTypeId, 5)
 
         fun remove(channel: String) = mockMvc.perform(
-            delete("/ops/channel-policy")
+            delete("/ops/channel-policy").withOpsKey()
                 .param("roomTypeId", roomTypeId.toString())
                 .param("stayDate", march1.toString())
                 .param("channel", channel),
@@ -110,7 +111,7 @@ class ChannelPolicyApiTest(
         val roomTypeId = fixture.seedGrid(march1, days = 3, physicalTotal = 10)
         setCap(roomTypeId, 5)
         mockMvc.perform(
-            put("/ops/channel-policy").contentType(MediaType.APPLICATION_JSON).content(
+            put("/ops/channel-policy").withOpsKey().contentType(MediaType.APPLICATION_JSON).content(
                 """
                 {"roomTypeId": $roomTypeId, "stayDate": "${march1.plusDays(2)}",
                  "channel": "CHANNEL_C", "value": 2}
@@ -120,7 +121,7 @@ class ChannelPolicyApiTest(
 
         // When: 첫날만 조회한다
         val response = mockMvc.perform(
-            get("/ops/channel-policy")
+            get("/ops/channel-policy").withOpsKey()
                 .param("propertyId", propertyId().toString())
                 .param("from", march1.toString())
                 .param("to", march1.plusDays(1).toString()),

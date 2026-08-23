@@ -40,6 +40,56 @@ spring:
     # 빈 DB 가 아닌데 조용히 통과하면 마이그레이션 이력이 어긋난 것을 못 잡는다.
     baseline-on-migrate: false
 
+# 헬스체크 (#69). 인스턴스가 살아 있는지 판정하는 수단이다.
+#
+# 이 앱의 생존은 **DB 에 붙을 수 있는가**로 결정된다. 200 만 돌려주는 헬스체크는
+# 값이 없다 -- 프로세스는 살아 있고 DB 커넥션을 못 잡는 인스턴스가 트래픽을 받는다.
+management:
+  endpoints:
+    web:
+      base-path: /actuator
+      exposure:
+        # health 만 연다. 나머지는 운영 정보를 노출하고, 지표는 /ops/metrics 가 낸다.
+        include: health
+  endpoint:
+    health:
+      # readiness 그룹에 db 를 **명시적으로** 넣는다.
+      #
+      # management.health.db.enabled 는 indicator 를 등록할 뿐이고, readiness
+      # 그룹의 기본 구성원은 readinessState 하나다. 넣지 않으면 DB 가 죽어도
+      # readiness 가 UP 을 답한다 -- 커넥션을 못 잡는 인스턴스가 트래픽을 받는다.
+      group:
+        readiness:
+          include: readinessState,db
+        # liveness 에는 db 를 넣지 않는다. 넣으면 DB 장애로 오케스트레이터가
+        # 살아 있는 프로세스를 죽여 회복을 방해한다.
+        liveness:
+          include: livenessState
+      # liveness 와 readiness 를 나눈다. 프로세스가 살아 있는 것과 트래픽을 받을
+      # 준비가 된 것은 다르다 -- 후자는 DB 를 본다.
+      probes:
+        enabled: true
+      show-details: never
+  health:
+    # DB 상태를 readiness 에 넣는다. 넣지 않으면 DB 가 죽은 인스턴스가
+    # "준비됐다" 고 답하고 트래픽을 받는다.
+    db:
+      enabled: true
+
+ops:
+  api-key:
+    # /ops 표면 인증 (#74). 환경변수로만 준다 -- 기본값을 두면 그 값이 곧 공개 키다.
+    #
+    # 비어 있으면 애플리케이션이 뜨지 않는다. "설정을 잊으면 인증이 꺼진다" 는
+    # 형태를 만들지 않는다.
+    # 기본값을 두지 않는다. \${OPS_API_KEY:} 처럼 escape 가 섞이면 Spring 이
+    # 리터럴 문자열로 넘겨주고, isNotBlank() 가 통과해 **그 리터럴이 곧 키가 된다** --
+    # 누구나 그 문자열을 헤더로 보내면 들어온다. 설정된 것처럼 보이는 미설정이
+    # 미설정보다 나쁘다.
+    #
+    # 콜론 뒤를 비우지 않고 아예 생략하면 환경변수가 없을 때 컨텍스트가 뜨지 않는다.
+    value: ${OPS_API_KEY}
+
 logging:
   level:
     root: INFO

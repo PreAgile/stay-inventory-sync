@@ -127,7 +127,13 @@ reservation  ->  daily_inventory  ->  channel_allotment
 ### 8. H2를 쓰지 않는다
 
 `SELECT FOR UPDATE` 시맨틱이 PostgreSQL과 달라 락 검증이 성립하지 않는다.
-모든 테스트는 Testcontainers 기반 실제 PostgreSQL에서 실행한다.
+**DB 를 만지는 테스트는 전부** Testcontainers 기반 실제 PostgreSQL 에서 실행한다.
+H2 를 쓰지 않는 이유는 `SELECT FOR UPDATE` 의 의미가 달라 락 검증이 성립하지 않기 때문이다.
+
+DB 를 만지지 않는 스펙이 둘 있다 — `ReservationStatusTest`(상태 전이표)와
+`ArchitectureTest`(클래스 파일만 읽는다). **둘은 결함이 아니라 `domain` 과
+`persistence` 를 가른 것의 의도된 효과다**(ADR-0008) — 상태 규칙이 틀렸는지 보려고
+컨테이너를 띄울 이유가 없다.
 
 ### 9. 인바운드 알림은 Inbox 를 거친다
 

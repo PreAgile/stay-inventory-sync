@@ -1,6 +1,7 @@
 package dev.preagile.stayinventory.api
 
 import dev.preagile.stayinventory.PostgresTestContainer
+import dev.preagile.stayinventory.support.withOpsKey
 import io.kotest.core.spec.style.FunSpec
 import io.kotest.extensions.spring.SpringExtension
 import io.kotest.matchers.shouldBe
@@ -42,6 +43,7 @@ class ApiExceptionHandlerTest(
         // Given / When: from 이 to 보다 뒤다
         val response = mockMvc.perform(
             get("/ops/inventory-diff")
+                .withOpsKey()
                 .param("propertyId", "1")
                 .param("from", march1.plusDays(5).toString())
                 .param("to", march1.toString()),
