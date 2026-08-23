@@ -122,8 +122,8 @@ class ReservationApiTest(
         response.status shouldBe 400
     }
 
-    test("직접 예약은 채널 예약번호를 서버가 채운다 — NULL 을 만들지 않는다") {
-        // Given: channelReservationId 없이 들어오는 직접 예약
+    test("#64 멱등 키가 없으면 400 이다 — 서버가 대신 만들지 않는다") {
+        // Given: channelReservationId 도 Idempotency-Key 도 없는 직접 예약
         val roomTypeId = fixture.seedGrid(march1, days = 3, physicalTotal = 5)
 
         // When
@@ -132,36 +132,91 @@ class ReservationApiTest(
                 .content(body(roomTypeId, channel = "DIRECT", channelReservationId = null)),
         ).andReturn().response
 
-        // Then: 비워 두면 UNIQUE(channel, channel_reservation_id) 가 직접 예약에
-        // 대해 아무것도 막지 못한다. 서버가 UUID 를 채워 그 구멍을 없앤다
-        response.status shouldBe 201
-        val saved = reservations.findAll().single()
-        saved.channelReservationId shouldNotBe ""
-        saved.channelReservationId.length shouldBe 36
+        // Then: 서버가 UUID 를 채우던 시절에는 201 이 나왔고, **재시도마다 키가
+        // 달라져 중복 예약이 생겼다.** 키를 만들 수 있는 것은 호출부뿐이다
+        response.status shouldBe 400
+        reservations.count() shouldBe 0
     }
 
-    test("같은 채널 예약번호를 두 번 보내면 두 번째는 500 이 아니라 DB 가 막는다") {
-        // Given: 이미 들어온 예약
+    test("#64 Idempotency-Key 헤더로 직접 예약을 만든다") {
+        // Given / When
+        val roomTypeId = fixture.seedGrid(march1, days = 3, physicalTotal = 5)
+        val response = mockMvc.perform(
+            post("/reservations").contentType(MediaType.APPLICATION_JSON)
+                .header("Idempotency-Key", "req-77")
+                .content(body(roomTypeId, channel = "DIRECT", channelReservationId = null)),
+        ).andReturn().response
+
+        // Then: 헤더 값이 그대로 멱등 키가 된다.
+        // 이름이 그 값의 용도를 말하는 것이 channelReservationId 를 강요하는 것보다 낫다
+        response.status shouldBe 201
+        reservations.findAll().single().channelReservationId shouldBe "req-77"
+    }
+
+    test("#64 응답을 못 받아 재시도하면 첫 시도와 같은 답을 받는다 — 중복 예약이 생기지 않는다") {
+        // Given: 첫 시도가 성공했다 (호출부는 응답을 못 받았다고 가정)
+        val roomTypeId = fixture.seedGrid(march1, days = 3, physicalTotal = 5)
+        val first = mockMvc.perform(
+            post("/reservations").contentType(MediaType.APPLICATION_JSON)
+                .header("Idempotency-Key", "req-88")
+                .content(body(roomTypeId, channel = "DIRECT", channelReservationId = null)),
+        ).andReturn().response
+        first.status shouldBe 201
+
+        // When: **같은 키로** 재시도한다
+        val retry = mockMvc.perform(
+            post("/reservations").contentType(MediaType.APPLICATION_JSON)
+                .header("Idempotency-Key", "req-88")
+                .content(body(roomTypeId, channel = "DIRECT", channelReservationId = null)),
+        ).andReturn().response
+
+        // Then: 200 이고 같은 예약 번호다. 409 를 주면 채널이 실패로 보고
+        // 최대 24시간 재시도한다 (절대 규칙 5)
+        retry.status shouldBe 200
+        retry.contentAsString shouldBe first.contentAsString
+
+        // And: 재고가 두 번 빠지지 않았다 -- 이것이 이 이슈의 실제 피해였다
+        fixture.sold(roomTypeId, march1) shouldBe 1
+        reservations.count() shouldBe 1
+    }
+
+    test("#64 같은 채널 예약번호를 두 번 보내면 200 으로 흡수한다") {
+        // Given: 이미 들어온 채널 예약
         val roomTypeId = fixture.seedGrid(march1, days = 3, physicalTotal = 5)
         mockMvc.perform(
             post("/reservations").contentType(MediaType.APPLICATION_JSON)
                 .content(body(roomTypeId)),
         ).andReturn().response.status shouldBe 201
 
-        // When: 같은 채널 예약번호로 한 번 더
-        val second = runCatching {
-            mockMvc.perform(
-                post("/reservations").contentType(MediaType.APPLICATION_JSON)
-                    .content(body(roomTypeId)),
-            ).andReturn().response.status
-        }
+        // When: 같은 번호로 한 번 더
+        val second = mockMvc.perform(
+            post("/reservations").contentType(MediaType.APPLICATION_JSON)
+                .content(body(roomTypeId)),
+        ).andReturn().response
 
-        // Then: 이 슬라이스는 아직 멱등 처리를 하지 않는다. 중요한 것은
-        // **재고가 두 번 빠지지 않았다**는 것이고, DB UNIQUE 가 그것을 막는다.
-        // 중복을 2xx 로 흡수하는 것은 #5 의 일이다 (절대 규칙 5)
-        second.isFailure shouldBe true
+        // Then: 500 이던 시절에는 재고는 지켜졌지만 **계약이 지켜지지 않았다** --
+        // 채널이 500 을 실패로 보고 계속 재시도했다
+        second.status shouldBe 200
         fixture.sold(roomTypeId, march1) shouldBe 1
         reservations.count() shouldBe 1
+    }
+
+    test("#64 다른 채널이 같은 키를 보내면 서로 다른 예약이다") {
+        // Given / When: 같은 Idempotency-Key, 다른 채널
+        val roomTypeId = fixture.seedGrid(march1, days = 3, physicalTotal = 5)
+        mockMvc.perform(
+            post("/reservations").contentType(MediaType.APPLICATION_JSON)
+                .content(body(roomTypeId, channel = "CHANNEL_A", channelReservationId = "K-1")),
+        ).andReturn().response.status shouldBe 201
+        val other = mockMvc.perform(
+            post("/reservations").contentType(MediaType.APPLICATION_JSON)
+                .content(body(roomTypeId, channel = "CHANNEL_B", channelReservationId = "K-1")),
+        ).andReturn().response
+
+        // Then: 키는 (channel, channel_reservation_id) 다. 채널 하나로만 보면
+        // 서로 다른 채널의 예약이 하나로 뭉개진다
+        other.status shouldBe 201
+        reservations.count() shouldBe 2
     }
     // ── 취소 ──────────────────────────────────────────────────────────────
     test("취소하면 200 과 되돌린 객실 수가 나오고 재고가 돌아온다") {
