@@ -7,7 +7,9 @@ import org.springframework.web.bind.annotation.RestController
 import java.time.Instant
 
 /**
- * 지표 2종.
+ * 지표 3덩어리. 계획(`B5`)은 2종이었고 구현에서 backlog 가 늘었다 --
+ * 발행된 것의 지연 분포만으로는 **영원히 안 나가는 이벤트가 쌓일 때 분포가
+ * 오히려 좋아 보인다.** 나간 것의 지연과 못 나간 것의 개수는 다른 질문이다.
  *
  * ```
  * overbooking_prevented_total   재고 부족으로 거절된 요청 수

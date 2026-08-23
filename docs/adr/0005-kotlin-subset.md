@@ -49,7 +49,7 @@ JVM 백엔드에서 Kotlin은 Java 대비 표현력이 높다.
 ```kotlin
 sealed interface ChannelSyncResult {
     data class Success(val channelRef: String) : ChannelSyncResult
-    data class RateLimited(val retryAfter: Duration) : ChannelSyncResult
+    data class RateLimited(val retryAfterSeconds: Long?) : ChannelSyncResult
     data class Retryable(val cause: String) : ChannelSyncResult
     data class Permanent(val cause: String) : ChannelSyncResult
 }
@@ -57,6 +57,9 @@ sealed interface ChannelSyncResult {
 
 릴레이는 `when`으로 네 케이스를 망라 처리한다.
 새 결과 유형이 추가되면 **컴파일 에러로 누락을 잡는다.**
+
+`retryAfterSeconds` 가 널 허용인 것 자체가 도메인 사실이다 —
+**`Retry-After` 를 주지 않는 채널이 있다.** 그때는 우리 백오프를 쓴다.
 
 이 구분이 중요한 이유는 `RateLimited`를 `Permanent`로 오분류하면
 정상 동작 중인 채널에 대한 이벤트가 DLQ로 떨어지기 때문이다.
