@@ -48,6 +48,16 @@ class InventoryService(
 
     @Transactional
     fun reserve(command: ReserveCommand): ReserveResult {
+        // ⓿ 멱등 1층 -- 조기 조회 (ADR-0014).
+        //
+        //    재시도한 호출부에게 **첫 시도와 같은 답**을 준다. 이것만으로는
+        //    부족하다 -- 읽기와 쓰기 사이에 다른 요청이 들어온다. 그때 막는 것은
+        //    DB UNIQUE 이고, 그 예외를 잡는 것이 2층이다(호출부 쪽 catch).
+        reservations.findByChannelAndChannelReservationId(
+            command.channel,
+            command.channelReservationId,
+        )?.let { return ReserveResult.Duplicate(requireNotNull(it.id)) }
+
         // ① 오름차순 날짜. 정렬은 커맨드가 들고 있다 -- 여기서 부르는 것을
         //    잊을 수 있는 형태로 두지 않는다.
         val dates = command.stayDates()

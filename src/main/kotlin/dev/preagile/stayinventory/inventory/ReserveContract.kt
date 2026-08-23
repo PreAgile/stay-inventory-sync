@@ -59,4 +59,13 @@ sealed interface ReserveResult {
     data class Reserved(val reservationId: Long) : ReserveResult
 
     data class Rejected(val unavailable: List<Unavailable>) : ReserveResult
+
+    /**
+     * 같은 멱등 키의 예약이 이미 있다 (ADR-0014).
+     *
+     * **실패가 아니다.** 재시도한 호출부가 알고 싶은 것은 "실패했나" 가 아니라
+     * "내 예약이 어떻게 됐나" 이므로 **기존 예약의 id 를 그대로 준다** --
+     * 재시도가 첫 시도와 같은 답을 받는다.
+     */
+    data class Duplicate(val reservationId: Long) : ReserveResult
 }

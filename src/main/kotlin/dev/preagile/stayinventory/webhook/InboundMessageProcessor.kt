@@ -107,6 +107,9 @@ class InboundMessageProcessor(
         return when (inventoryService.reserve(command)) {
             is ReserveResult.Reserved -> ProcessOutcome.PROCESSED
 
+            // 이미 있는 예약. 조기 조회가 잡았다 -- 여기 오는 것은 정상이다.
+            is ReserveResult.Duplicate -> ProcessOutcome.IGNORED
+
             // 재고가 없어서 못 받는다. **재시도해도 결과가 같으므로 IGNORED 다.**
             //
             // 여기가 이 시스템이 어긋남을 인정하는 지점이다 -- 채널은 예약을 이미
