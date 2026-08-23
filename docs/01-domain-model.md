@@ -108,6 +108,7 @@ erDiagram
         varchar  sequence_key UK "순서 판정용 원본. NULL 가능 -> NULLS NOT DISTINCT 필수"
         bigint   sequence_rank "어댑터가 정규화한 비교 가능한 값 (ADR-0013)"
         varchar  event_type "RESERVATION_CREATED|RESERVATION_CANCELED. 묘비 판정용"
+        timestamptz leased_until "처리 임대. 미래면 다른 인스턴스가 처리 중 (#66)"
         jsonb    payload      "받은 그대로. 해석하지 않는다"
         varchar  status       "PENDING|PROCESSED|IGNORED|DEAD"
         int      attempt_count

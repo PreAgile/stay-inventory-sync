@@ -40,6 +40,8 @@ Testcontainers 가 실행마다 격리된 PostgreSQL 16 을 띄운다.
 | **순서키 없는 채널의 취소가 유실되지 않는다** | `--tests '*WebhookOrderingTest*'` | 멱등 키의 `event_type` |
 | **예약 재시도가 중복 예약을 만들지 않는다** | `--tests '*ReservationApiTest*'` | 호출부 멱등 키 (`#64`) |
 | **키가 없으면 거부한다** | `--tests '*ReservationApiTest*'` | 서버가 키를 만들지 않는다 |
+| **DB 장애가 503 으로 나간다** | `--tests '*ApiExceptionHandlerTest*'` | 전역 핸들러 (`#65`) |
+| **집은 알림이 다시 잡히지 않는다** | `--tests '*InboundLeaseTest*'` | 집기-임대 CTE (`#66`) |
 | 릴레이가 실패한 발행을 다시 보낸다 | `--tests '*OutboxRelayTest*'` | 백오프 스케줄 |
 | 인스턴스 2대가 같은 이벤트를 두 번 보내지 않는다 | `--tests '*OutboxRelayMultiInstanceTest*'` | 집기-임대 한 문장 |
 | 레이트 리밋이 정상 이벤트를 DEAD 로 보내지 않는다 | `--tests '*OutboxDlqTest*'` | `countAsFailure = false` |

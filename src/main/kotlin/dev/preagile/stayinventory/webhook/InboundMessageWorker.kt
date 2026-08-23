@@ -16,6 +16,17 @@ import org.springframework.stereotype.Service
  *
  * 한 건의 실패가 나머지를 막지 않는다. 실패한 건은 `PENDING` 으로 남아 다음
  * 회차에 다시 잡힌다 -- 한 건 때문에 큐 전체가 서면 그것이 곧 장애다.
+ *
+ * ## 인스턴스 하나만 한 건을 집는다 (`#66`)
+ *
+ * 릴레이에는 집기-임대가 있고 여기에는 없었다. **그 비대칭에 근거가 없었다.**
+ *
+ * 없어도 중복 **처리**는 막혔다 -- 조기 반환과 `reservation` 의 `UNIQUE` 가
+ * 막는다. 막히지 않은 것은 중복 **시도**이고, 그때 한쪽 트랜잭션은 예외로
+ * 롤백된 뒤 `runCatching` 이 삼킨다. **안전하지만 조용히 낭비했다.**
+ *
+ * 낭비보다 나쁜 것은 **릴레이와 다른 규율을 쓰는 것**이다 -- 다음 사람이 어느
+ * 쪽을 표준으로 볼지 알 수 없다. 저장소가 이미 배운 패턴을 적용한다.
  */
 @Service
 class InboundMessageWorker(
@@ -24,11 +35,22 @@ class InboundMessageWorker(
 ) {
     private val log = LoggerFactory.getLogger(javaClass)
 
-    /** 대기 중인 알림을 처리하고 **처리된 건수**를 준다. */
+    /** 대기 중인 알림을 **집어서** 처리하고 처리된 건수를 준다. */
     fun processPending(limit: Int = 100): Int =
-        inbound.findPending(limit).count { message ->
+        inbound.claimPending(limit, LEASE_SECONDS).count { message ->
             runCatching { processor.processOne(requireNotNull(message.id)) }
                 .onFailure { log.warn("인바운드 처리 실패: id={}", message.id, it) }
                 .getOrDefault(ProcessOutcome.FAILED) != ProcessOutcome.FAILED
         }
+
+    companion object {
+        /**
+         * 임대 길이.
+         *
+         * 한 건 처리는 도메인 트랜잭션 하나이므로 짧다. 릴레이(1분)보다 짧게 잡는
+         * 이유는 **외부 호출이 없기 때문**이다 -- 죽은 인스턴스가 남긴 임대만큼
+         * 그 알림의 처리가 늦어지므로 필요 이상으로 길게 잡을 이유가 없다.
+         */
+        const val LEASE_SECONDS = 30
+    }
 }
