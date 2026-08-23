@@ -139,33 +139,72 @@ interface InboundMessageRepository : JpaRepository<InboundMessage, Long> {
      *
      * 애플리케이션 판정과 DB 제약이 같은 것을 같다고 봐야 두 방어선이 겹친다.
      * 판정이 어긋나면 조기 반환은 통과시키고 DB 만 막아, 정상 경로가 늘 예외로 끝난다.
+     *
+     * **`event_type` 이 키에 있다.** 없으면 순서키를 주지 않는 채널에서 같은 예약의
+     * 취소가 생성과 같은 키를 갖고, 중복으로 버려진다 -- 그리고 2xx 를 주므로
+     * 채널은 전달됐다고 믿고 다시 보내지 않는다. **취소가 영구히 유실된다.**
      */
     @Query(
         value = "SELECT count(*) > 0 FROM inbound_message " +
             "WHERE channel = :channel AND external_id = :externalId " +
+            "AND event_type IS NOT DISTINCT FROM :eventType " +
             "AND sequence_key IS NOT DISTINCT FROM :sequenceKey",
         nativeQuery = true,
     )
     fun alreadyReceived(
         @Param("channel") channel: String,
         @Param("externalId") externalId: String,
+        @Param("eventType") eventType: String?,
         @Param("sequenceKey") sequenceKey: String?,
     ): Boolean
 
     /**
      * 처리 대기 알림을 꺼낸다.
      *
-     * `(external_id, sequence_key)` 순으로 준다. 같은 예약에 대한 알림은 순서키
+     * `(external_id, sequence_rank)` 순으로 준다. 같은 예약에 대한 알림은 순서
      * 순서로 처리해야 하고(`07-reconciliation.md`), 서로 다른 예약끼리는 순서를
-     * 신경 쓰지 않는다. `NULLS FIRST` 는 순서키 없는 알림을 먼저 보낸다 --
-     * 그 채널은 어차피 순서를 복원할 수 없으므로 도착 순서가 최선이다.
+     * 신경 쓰지 않는다.
+     *
+     * **`sequence_key` 가 아니라 `sequence_rank` 로 정렬한다** (ADR-0013).
+     * 원본은 `VARCHAR` 이므로 문자열 정렬이 되어 숫자 리비전 `10` 이 `2` 보다
+     * 먼저 처리됐다 -- 순서 역전을 막으려는 정렬이 역전을 만들었다.
+     *
+     * `NULLS FIRST` 는 정규화할 수 없는 알림을 먼저 보낸다 -- 그 채널은 어차피
+     * 순서를 복원할 수 없으므로 도착 순서(`id`)가 최선이다.
      */
     @Query(
         value = "SELECT * FROM inbound_message WHERE status = 'PENDING' " +
-            "ORDER BY external_id, sequence_key NULLS FIRST, id LIMIT :limit",
+            "ORDER BY external_id, sequence_rank NULLS FIRST, id LIMIT :limit",
         nativeQuery = true,
     )
     fun findPending(@Param("limit") limit: Int): List<InboundMessage>
+
+    /**
+     * 이 예약에 **더 높은 rank 의 취소가 이미 기록돼 있나** (ADR-0013 의 묘비).
+     *
+     * 정렬은 한 배치 안에서만 순서를 정한다. 취소와 생성이 다른 폴링 주기에
+     * 도착하면 정렬이 개입할 자리가 없고, 그때 늦게 온 생성이 예약을 확정해
+     * **최신 취소가 사라진다.**
+     *
+     * 별도 테이블을 만들지 않는 이유는 `inbound_message` 가 이미 묘비이기
+     * 때문이다 -- 받은 사실을 보존하는 것이 Inbox 의 임무이고, 그 기록에
+     * 필요한 정보가 다 있다.
+     *
+     * `rank` 가 `null` 인 알림은 세지 않는다. 비교할 수 없는 값으로 "더 높다" 를
+     * 판정할 수 없고, 그 채널의 한계는 drift 검출이 받는다.
+     */
+    @Query(
+        value = "SELECT count(*) > 0 FROM inbound_message " +
+            "WHERE channel = :channel AND external_id = :externalId " +
+            "AND sequence_rank IS NOT NULL AND sequence_rank > :rank " +
+            "AND event_type = 'RESERVATION_CANCELED'",
+        nativeQuery = true,
+    )
+    fun hasLaterCancel(
+        @Param("channel") channel: String,
+        @Param("externalId") externalId: String,
+        @Param("rank") rank: Long,
+    ): Boolean
 }
 
 interface ChannelPolicyRepository : JpaRepository<ChannelPolicy, ChannelPolicyId>

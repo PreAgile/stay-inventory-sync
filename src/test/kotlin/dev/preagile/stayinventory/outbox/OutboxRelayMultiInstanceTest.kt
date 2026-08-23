@@ -71,6 +71,9 @@ class OutboxRelayMultiInstanceTest(
             to: java.time.LocalDate,
         ): Map<java.time.LocalDate, Int> = emptyMap()
 
+        // 이 스펙은 순서를 보지 않는다. 순서 판정은 WebhookOrderingTest 의 관심사다.
+        override fun sequenceRank(sequenceKey: String?): Long? = null
+
         override fun push(idempotencyKey: Long, payload: String): ChannelSyncResult {
             shared.attempts.incrementAndGet()
             val first = shared.seen.putIfAbsent(idempotencyKey, true) == null

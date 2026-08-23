@@ -45,6 +45,24 @@ class InboundMessage(
     @Column(name = "sequence_key", length = 128)
     val sequenceKey: String? = null,
 
+    /**
+     * 어댑터가 정규화한 비교 가능한 순서값 (ADR-0013).
+     *
+     * `null` 은 **순서를 복원할 수 없다**는 뜻이다. 원본 [sequenceKey] 는 그대로
+     * 남으므로 멱등 판정은 영향받지 않는다.
+     */
+    @Column(name = "sequence_rank")
+    val sequenceRank: Long? = null,
+
+    /**
+     * `kind` 아래의 세부 사건 (`RESERVATION_CREATED` · `RESERVATION_CANCELED`).
+     *
+     * 묘비 판정이 이 값을 쓴다. `payload` 를 문자열로 뒤지면 게스트 이름에 같은
+     * 문자열이 있을 때 오탐하므로 **받은 사실의 분류를 컬럼으로 둔다.**
+     */
+    @Column(name = "event_type")
+    val eventType: String? = null,
+
     @JdbcTypeCode(SqlTypes.JSON)
     @Column(name = "payload", nullable = false)
     val payload: String,

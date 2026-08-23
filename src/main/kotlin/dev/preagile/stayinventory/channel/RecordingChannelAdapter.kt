@@ -115,6 +115,15 @@ class RecordingChannelAdapter : ChannelAdapter {
         silentlyDropped.add(roomTypeId to stayDate)
     }
 
+    /**
+     * 이 스텁은 **숫자 리비전**을 주는 채널을 흉내낸다.
+     *
+     * 숫자로 읽히지 않으면 `null` 이다 — 흉내내는 것이 "정규화 실패" 경로이고,
+     * 그 경로가 실제로 존재한다는 것을 테스트가 확인해야 한다.
+     */
+    override fun sequenceRank(sequenceKey: String?): Long? =
+        sequenceKey?.trim()?.toLongOrNull()
+
     override fun currentInventory(
         roomTypeId: Long,
         from: java.time.LocalDate,

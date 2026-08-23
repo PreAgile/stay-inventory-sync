@@ -1,6 +1,7 @@
 package dev.preagile.stayinventory.webhook
 
 import com.fasterxml.jackson.databind.ObjectMapper
+import dev.preagile.stayinventory.channel.ChannelAdapter
 import dev.preagile.stayinventory.domain.InboundKind
 import dev.preagile.stayinventory.persistence.InboundMessage
 import dev.preagile.stayinventory.persistence.InboundMessageRepository
@@ -25,12 +26,19 @@ import org.springframework.stereotype.Service
 class InboundMessageRecorder(
     private val inbound: InboundMessageRepository,
     private val objectMapper: ObjectMapper,
+    private val adapters: List<ChannelAdapter>,
 ) {
 
     fun record(channel: String, webhook: ReservationWebhook): RecordOutcome {
         // ① 애플리케이션 조기 반환. 흔한 중복을 예외 없이 걸러낸다.
         //    이것만으로는 부족하다 -- 읽기와 쓰기 사이에 다른 요청이 들어온다.
-        if (inbound.alreadyReceived(channel, webhook.channelReservationId, webhook.sequenceKey)) {
+        if (inbound.alreadyReceived(
+                channel,
+                webhook.channelReservationId,
+                webhook.event.name,
+                webhook.sequenceKey,
+            )
+        ) {
             return RecordOutcome.Duplicate
         }
 
@@ -41,6 +49,10 @@ class InboundMessageRecorder(
                     kind = InboundKind.BOOKING,
                     externalId = webhook.channelReservationId,
                     sequenceKey = webhook.sequenceKey,
+                    // 정규화는 **기록 시점**에 한다. 처리 시점에 하면 정렬이
+                    // 정규화 결과를 쓸 수 없다 -- 정렬이 조회에 있기 때문이다.
+                    sequenceRank = rankFor(channel, webhook.sequenceKey),
+                    eventType = webhook.event.name,
                     // 받은 그대로 적는다. 해석에 실패해도 받은 사실은 남아야 한다.
                     payload = objectMapper.writeValueAsString(webhook),
                 ),
@@ -52,4 +64,14 @@ class InboundMessageRecorder(
             RecordOutcome.Duplicate
         }
     }
+
+    /**
+     * 순서키를 비교 가능한 값으로 바꾼다 (ADR-0013).
+     *
+     * 그 채널의 어댑터가 없으면 `null` 이다 -- 형식을 아는 주체가 없으므로
+     * 추측하지 않는다. 순서를 복원할 수 없다는 사실이 그대로 남는다.
+     */
+    private fun rankFor(channel: String, sequenceKey: String?): Long? =
+        adapters.firstOrNull { it.channel == channel }?.sequenceRank(sequenceKey)
+            ?: adapters.firstOrNull()?.sequenceRank(sequenceKey)
 }

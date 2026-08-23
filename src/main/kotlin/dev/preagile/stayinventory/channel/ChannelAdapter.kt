@@ -60,6 +60,21 @@ interface ChannelAdapter {
      * 0 과 구분해야 한다 -- 0 은 "매진이라고 안다" 이고 부재는 "통보가 도달한
      * 적이 없다" 이며, 후자가 이 리포트가 잡으려는 것이다.
      */
+    /**
+     * 채널이 준 순서키를 **비교 가능한 값으로 정규화**한다 (ADR-0013).
+     *
+     * 형식이 채널마다 다르다 — 숫자 리비전 · ISO 타임스탬프 · 불투명 문자열.
+     * **형식을 아는 것은 어댑터**이므로 여기서 변환한다. 도메인이 형식을 알면
+     * 채널이 하나 늘 때 도메인이 바뀐다.
+     *
+     * 원본은 보존된다. 이 값은 정렬과 묘비 판정에만 쓰이고,
+     * 멱등 판정은 **원본** `sequence_key` 에 걸린 채로 둔다.
+     *
+     * @return 비교 가능한 값. **정규화할 수 없으면 `null`** —
+     *   순서를 복원할 수 없다는 뜻이고, 그 채널은 drift 검출에 더 의존해야 한다.
+     */
+    fun sequenceRank(sequenceKey: String?): Long?
+
     fun currentInventory(roomTypeId: Long, from: java.time.LocalDate, to: java.time.LocalDate):
         Map<java.time.LocalDate, Int>
 }

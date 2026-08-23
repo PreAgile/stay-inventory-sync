@@ -265,6 +265,7 @@ class OutboxRelayTest(
                 from: LocalDate,
                 to: LocalDate,
             ): Map<LocalDate, Int> = emptyMap()
+            override fun sequenceRank(sequenceKey: String?): Long? = null
         }
         val relayWithThrowingAdapter = OutboxRelay(jdbc, listOf(throwing))
 
