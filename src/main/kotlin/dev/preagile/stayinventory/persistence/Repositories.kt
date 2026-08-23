@@ -180,6 +180,54 @@ interface InboundMessageRepository : JpaRepository<InboundMessage, Long> {
     fun findPending(@Param("limit") limit: Int): List<InboundMessage>
 
     /**
+     * 처리 대기 알림을 **집으면서 임대한다** (`#66`).
+     *
+     * 릴레이와 같은 한 문장이다. 두 단계로 나누면 **집기와 처리가 다른 트랜잭션이
+     * 되고, 집자마자 락이 사라진다** -- `SKIP LOCKED` 만으로는 다중 인스턴스가
+     * 막히지 않는다(`OutboxRelay` 가 같은 것을 배웠다).
+     *
+     * `leased_until` 을 미래로 밀어 놓는 것이 임대다. 다른 인스턴스의 폴링 조건에서
+     * 빠지므로 락이 풀린 뒤에도 겹치지 않는다.
+     *
+     * 임대가 없어도 중복 **처리**는 막혔다 -- 조기 반환과 `reservation` 의
+     * `UNIQUE` 가 막는다. 막히지 않은 것은 중복 **시도**이고, 그때 한쪽 트랜잭션은
+     * 예외로 롤백된다. **안전하지만 조용히 낭비했다.**
+     *
+     * ## CTE 로 감싸는 이유 -- RETURNING 은 순서를 보장하지 않는다
+     *
+     * 안쪽 `ORDER BY` 는 **어느 행을 집을지**만 정하고 `RETURNING` 의 출력 순서는
+     * 정하지 않는다. 처음 판이 그래서 `rank 10` 을 `rank 2` 보다 먼저 돌려줬고,
+     * **`#72` 가 고친 순서 역전이 되돌아왔다** -- 테스트가 잡았다.
+     *
+     * 바깥 `SELECT` 에 `ORDER BY` 를 다시 둬서 **정렬을 쿼리에 남긴다.**
+     * 호출부에서 `sortedBy` 를 부르는 구조면 그 한 줄이 빠질 자리가 생긴다
+     * (절대 규칙 2 와 같은 이유).
+     */
+    @Query(
+        value = """
+            WITH claimed AS (
+                UPDATE inbound_message
+                   SET leased_until = now() + (:leaseSeconds || ' seconds')::interval
+                 WHERE id IN (
+                       SELECT id FROM inbound_message
+                        WHERE status = 'PENDING'
+                          AND (leased_until IS NULL OR leased_until <= now())
+                        ORDER BY external_id, sequence_rank NULLS FIRST, id
+                        FOR UPDATE SKIP LOCKED
+                        LIMIT :limit
+                 )
+                RETURNING *
+            )
+            SELECT * FROM claimed ORDER BY external_id, sequence_rank NULLS FIRST, id
+        """,
+        nativeQuery = true,
+    )
+    fun claimPending(
+        @Param("limit") limit: Int,
+        @Param("leaseSeconds") leaseSeconds: Int,
+    ): List<InboundMessage>
+
+    /**
      * 이 예약에 **더 높은 rank 의 취소가 이미 기록돼 있나** (ADR-0013 의 묘비).
      *
      * 정렬은 한 배치 안에서만 순서를 정한다. 취소와 생성이 다른 폴링 주기에

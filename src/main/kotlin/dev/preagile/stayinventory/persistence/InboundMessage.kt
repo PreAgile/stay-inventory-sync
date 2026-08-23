@@ -63,6 +63,16 @@ class InboundMessage(
     @Column(name = "event_type")
     val eventType: String? = null,
 
+    /**
+     * 처리 임대 (`#66`). 미래면 다른 인스턴스가 처리 중이다.
+     *
+     * 릴레이의 `next_attempt_at` 과 같은 역할이지만 컬럼을 따로 두는 이유는
+     * Inbox 에 재시도 스케줄이 없기 때문이다 -- 실패한 건은 `PENDING` 으로 남아
+     * 다음 회차에 다시 잡힌다.
+     */
+    @Column(name = "leased_until")
+    var leasedUntil: Instant? = null,
+
     @JdbcTypeCode(SqlTypes.JSON)
     @Column(name = "payload", nullable = false)
     val payload: String,

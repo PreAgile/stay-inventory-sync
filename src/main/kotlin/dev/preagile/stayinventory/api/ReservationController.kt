@@ -10,7 +10,6 @@ import jakarta.validation.constraints.Min
 import jakarta.validation.constraints.NotBlank
 import org.springframework.http.HttpStatus
 import org.springframework.http.ResponseEntity
-import org.springframework.web.bind.annotation.ExceptionHandler
 import org.springframework.web.bind.annotation.PathVariable
 import org.springframework.web.bind.annotation.PostMapping
 import org.springframework.web.bind.annotation.RequestBody
@@ -121,9 +120,9 @@ class ReservationController(
         }
 
     /** `ReserveCommand` 의 `require` 가 던지는 것. 요청 자체가 틀렸으므로 400 이다. */
-    @ExceptionHandler(IllegalArgumentException::class)
-    fun onInvalidRequest(e: IllegalArgumentException): ResponseEntity<Any> =
-        ResponseEntity.badRequest().body(mapOf("message" to (e.message ?: "잘못된 요청")))
+    // IllegalArgumentException 핸들러를 여기 두지 않는다. ApiExceptionHandler 로
+    // 올렸다 -- 컨트롤러마다 붙이는 구조는 붙이는 것을 잊을 자리를 만들고,
+    // 실제로 InventoryDiffController 의 require 가 400 이 아니라 500 이었다 (#65).
 }
 
 data class CreateReservationRequest(
