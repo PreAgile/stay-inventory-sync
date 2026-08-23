@@ -13,13 +13,26 @@ import javax.sql.DataSource
  */
 class InventoryFixture(private val dataSource: DataSource) {
 
-    fun wipe() = exec(
-        """
-        TRUNCATE channel_policy, inventory_hold, inbound_message, outbox_event,
-                 reservation, daily_inventory, room_type, property
-        RESTART IDENTITY CASCADE
-        """.trimIndent(),
-    )
+    fun wipe() {
+        exec(
+            """
+            TRUNCATE channel_policy, inventory_hold, inbound_message, outbox_event,
+                     reservation, daily_inventory, room_type, property
+            RESTART IDENTITY CASCADE
+            """.trimIndent(),
+        )
+        // resync_cursor 는 TRUNCATE 하지 않는다. 단일 행이 마이그레이션에서 심긴
+        // 것이므로 지우면 재동기화가 아무것도 하지 않고, 그 실패는 조용하다.
+        // 초기 상태로 되돌린다 -- 커서가 남으면 다음 테스트가 앞 구간을 건너뛴다.
+        exec(
+            """
+            UPDATE resync_cursor
+               SET last_room_type_id = 0, last_stay_date = DATE '0001-01-01',
+                   leased_until = NULL
+             WHERE id = 1
+            """.trimIndent(),
+        )
+    }
 
     /** 숙소·룸타입 하나와 [from] 부터 [days] 일치의 격자를 만든다. 룸타입 id 를 준다. */
     fun seedGrid(

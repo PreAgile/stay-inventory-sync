@@ -64,7 +64,7 @@ class SchemaMigrationTest(
     // 이 스펙은 INV-2 를 면제받는다. 클래스 본문의 DirectRowSpec 구현이 그 선언이다.
 
     // ── 스키마 형태 ────────────────────────────────────────────────────────
-    test("테이블 8개가 정확히 이 이름으로 존재한다") {
+    test("테이블 9개가 정확히 이 이름으로 존재한다 — 도메인 8개 + 운영 1개") {
         // Given: V1 이 적용된 스키마
         dataSource.connection.use { conn ->
             // When: public 스키마의 테이블 목록을 읽는다
@@ -78,9 +78,11 @@ class SchemaMigrationTest(
                     """.trimIndent(),
                 ).use { rs -> buildList { while (rs.next()) add(rs.getString(1)) } }
             }
+            // 알파벳 순이다. 쿼리가 ORDER BY table_name 이므로 목록도 그 순서여야 한다.
+            // resync_cursor 만 도메인이 아니다 -- 진행 상태와 임대 (#71 · #67)
             tables shouldContainExactly listOf(
                 "channel_policy", "daily_inventory", "inbound_message", "inventory_hold",
-                "outbox_event", "property", "reservation", "room_type",
+                "outbox_event", "property", "reservation", "resync_cursor", "room_type",
             )
         }
     }
