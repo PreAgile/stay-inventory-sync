@@ -5,6 +5,8 @@ import io.kotest.core.spec.style.FunSpec
 import io.kotest.extensions.spring.SpringExtension
 import io.kotest.matchers.collections.shouldBeEmpty
 import io.kotest.matchers.shouldBe
+import io.kotest.matchers.shouldNotBe
+import org.springframework.boot.actuate.health.HealthEndpointGroups
 import org.springframework.boot.test.autoconfigure.web.servlet.AutoConfigureMockMvc
 import org.springframework.boot.test.context.SpringBootTest
 import org.springframework.context.ApplicationContext
@@ -84,9 +86,26 @@ class OpsSecurityTest(
     }
 
     test("#74 키가 틀리면 401 이다") {
+        // Given: 설정된 키와 다른 값
+        // When: /ops 를 호출한다
+        // Then: 401. 길이가 같은 다른 키도 막혀야 한다 --
+        // 비교가 접두사만 보면 앞부분이 맞는 키가 통과한다
         mockMvc.perform(
             get("/ops/metrics").header(OpsApiKeyFilter.HEADER, "wrong-key-000000000"),
         ).andReturn().response.status shouldBe 401
+    }
+
+    test("#74 플레이스홀더 리터럴은 키가 아니다 — 설정된 것처럼 보이는 미설정을 막는다") {
+        // Given: escape 가 섞이면 Spring 이 ${'$'}{OPS_API_KEY:} 를 **리터럴 문자열**로
+        // 넘겨준다. isNotBlank() 가 통과하므로 앱은 뜨고, 그 리터럴이 곧 키가 된다
+        // When: 그 문자열을 헤더로 보낸다
+        val status = mockMvc.perform(
+            get("/ops/metrics").header(OpsApiKeyFilter.HEADER, "${'$'}{OPS_API_KEY:}"),
+        ).andReturn().response.status
+
+        // Then: 401. 통과하면 **누구나 그 문자열로 들어온다** --
+        // 미설정보다 나쁘다. 설정된 것처럼 보이기 때문이다
+        status shouldBe 401
     }
 
     test("#74 도메인 경로는 막지 않는다 — 채널 연동 계약을 바꾸지 않는다") {
@@ -102,15 +121,38 @@ class OpsSecurityTest(
     }
 
     // ── #69 헬스체크 ──────────────────────────────────────────────────────
-    test("#69 readiness 가 DB 상태를 본다 — 200 만 돌려주는 헬스체크는 값이 없다") {
-        // Given / When
-        val response = mockMvc.perform(get("/actuator/health/readiness"))
-            .andReturn().response
+    test("#69 readiness 그룹이 db 를 실제로 포함한다 — UP 만 보면 확인이 안 된다") {
+        // Given: readiness 그룹 설정
+        // When: HealthEndpointGroups 에서 그 그룹의 구성원을 읽는다
+        val groups = context.getBean(HealthEndpointGroups::class.java)
+        val readiness = groups.get("readiness")
 
-        // Then: DB 를 안 보면 커넥션을 못 잡는 인스턴스가 "준비됐다" 고 답하고
-        // 트래픽을 받는다. 이 저장소는 다중 인스턴스를 전제로 설계를 논한다
-        response.status shouldBe 200
-        response.contentAsString shouldBe """{"status":"UP"}"""
+        // Then: db 가 없으면 DB 가 죽어도 readiness 가 UP 을 답한다.
+        //
+        // **응답이 200/UP 인 것만 보면 이것을 확인할 수 없다** --
+        // management.health.db.enabled 는 indicator 만 등록하고, readiness 그룹의
+        // 기본 구성원은 readinessState 하나다. 첫 판이 그 상태로 통과했다
+        readiness shouldNotBe null
+        readiness!!.isMember("db") shouldBe true
+        readiness.isMember("readinessState") shouldBe true
+    }
+
+    test("#69 liveness 그룹은 db 를 포함하지 않는다") {
+        // Given / When
+        val groups = context.getBean(HealthEndpointGroups::class.java)
+        val liveness = groups.get("liveness")
+
+        // Then: 포함하면 DB 장애로 오케스트레이터가 살아 있는 프로세스를 죽여
+        // 회복을 방해한다. 죽일 이유와 트래픽을 끊을 이유는 다르다
+        liveness shouldNotBe null
+        liveness!!.isMember("db") shouldBe false
+    }
+
+    test("#69 readiness 엔드포인트가 응답한다") {
+        // Given / When / Then: 그룹 구성이 맞아도 엔드포인트가 안 열려 있으면
+        // 오케스트레이터가 부를 곳이 없다
+        mockMvc.perform(get("/actuator/health/readiness"))
+            .andReturn().response.status shouldBe 200
     }
 
     test("#69 liveness 는 DB 를 보지 않는다 — DB 장애로 프로세스가 재시작되면 안 된다") {
