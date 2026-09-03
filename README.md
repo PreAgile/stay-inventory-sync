@@ -767,6 +767,9 @@ Could not resolve placeholder 'OPS_API_KEY' in value "${OPS_API_KEY}"
 [`docs/09-how-to-verify.md`](docs/09-how-to-verify.md) 에 정리해 두었습니다.
 **README 를 다 읽지 않고 확인부터 해 보고 싶으시면 거기서 시작하시면 됩니다.**
 
+코드가 어디 있는지부터 보고 싶으시면 [`docs/10-code-map.md`](docs/10-code-map.md) 입니다.
+기능마다 구현 파일과 함수, 그리고 그것을 붙잡는 테스트 파일을 한 표에 놓았습니다.
+
 ---
 
 ## 11. 문서
@@ -783,6 +786,7 @@ Could not resolve placeholder 'OPS_API_KEY' in value "${OPS_API_KEY}"
 | [07-reconciliation](docs/07-reconciliation.md) | 채널과의 대사 설계 · Inbox · 에코 판별 |
 | [08-failure-and-recovery](docs/08-failure-and-recovery.md) | **장애 여덟 갈래 · 회복 경로 · 아직 비어 있는 것** |
 | [09-how-to-verify](docs/09-how-to-verify.md) | **주장마다 어떤 명령으로 확인하나** |
+| [10-code-map](docs/10-code-map.md) | **기능마다 어느 파일의 어느 함수인가 · 그것을 붙잡는 테스트 파일** |
 | [ADR](docs/adr/) | 설계 결정과 **기각한 대안** (`0001`~`0014`. `0008` 은 영속성 매핑, `0012`·`0013` 은 순서, `0014` 는 멱등 계약) |
 | [AGENTS.md](AGENTS.md) | 코딩 에이전트용 규약 (`CLAUDE.md`는 심볼릭 링크) |
 | [CONTRIBUTING.md](CONTRIBUTING.md) | 사람용 진입점 — 읽는 순서, 라벨·마일스톤 체계, PR 규약 |
